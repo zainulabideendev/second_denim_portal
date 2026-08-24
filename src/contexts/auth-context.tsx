@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { onAuthStateChanged, User } from "firebase/auth";
-import { clientAuth } from "@/lib/firebase-client";
+import { getClientAuth, isFirebaseClientConfigured } from "@/lib/firebase-client";
 import type { AppUser } from "@/lib/types";
 
 interface AuthContextValue {
@@ -31,7 +31,12 @@ export function AuthProvider({
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(clientAuth, (user) => {
+    if (!isFirebaseClientConfigured()) {
+      setLoading(false);
+      return;
+    }
+
+    const unsub = onAuthStateChanged(getClientAuth(), (user) => {
       setFirebaseUser(user);
       setLoading(false);
     });

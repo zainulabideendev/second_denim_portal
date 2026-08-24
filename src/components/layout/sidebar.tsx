@@ -20,7 +20,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
 import { api } from "@/lib/api-client";
-import { clientAuth } from "@/lib/firebase-client";
+import { getClientAuth } from "@/lib/firebase-client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
@@ -127,7 +127,7 @@ export function Sidebar() {
 
   async function handleLogout() {
     try {
-      await clientAuth.signOut();
+      await getClientAuth().signOut();
       await api.post("/api/auth/logout", {});
       router.push("/login");
     } catch {

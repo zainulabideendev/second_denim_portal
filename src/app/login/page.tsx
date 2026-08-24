@@ -6,7 +6,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { signInWithEmailAndPassword } from "firebase/auth";
-import { clientAuth } from "@/lib/firebase-client";
+import { getClientAuth, isFirebaseClientConfigured } from "@/lib/firebase-client";
 import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,10 +34,17 @@ function LoginForm() {
   } = useForm<LoginForm>({ resolver: zodResolver(loginSchema) });
 
   async function onSubmit(values: LoginForm) {
+    if (!isFirebaseClientConfigured()) {
+      toast.error(
+        "Firebase is not configured on this deployment. Add NEXT_PUBLIC_FIREBASE_* env vars on Vercel and redeploy."
+      );
+      return;
+    }
+
     setLoading(true);
     try {
       const userCred = await signInWithEmailAndPassword(
-        clientAuth,
+        getClientAuth(),
         values.email,
         values.password
       );
@@ -71,6 +78,13 @@ function LoginForm() {
 
         {/* Form */}
         <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
+          {!isFirebaseClientConfigured() && (
+            <p className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              Firebase env vars are missing on this deployment. Add{" "}
+              <code className="font-mono">NEXT_PUBLIC_FIREBASE_*</code> in Vercel
+              and redeploy.
+            </p>
+          )}
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="email">Email</Label>
