@@ -84,11 +84,18 @@ export async function POST(
 
     const assignedInCountry = assignedSnap.docs
       .filter((d) => d.data().status === "assigned" && d.data().country === country)
-      .map((d) => ({ ...d.data(), country: d.data().country as Country }));
+      .map((d) => {
+        const data = d.data();
+        return {
+          country: data.country as Country,
+          lane: data.lane as string | undefined,
+          restricted: Boolean(data.restricted),
+        };
+      });
 
     let backupCount = 0;
     for (const p of assignedInCountry) {
-      if (normalizeLane(p.lane as string | undefined) === "backup") backupCount++;
+      if (normalizeLane(p.lane) === "backup") backupCount++;
     }
 
     if (lane === "backup") {
