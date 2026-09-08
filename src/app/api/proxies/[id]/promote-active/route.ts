@@ -5,6 +5,7 @@ import { writeAuditLog } from "@/lib/audit";
 import {
   getUserPoolAssignments,
   getAssignmentSizePerLane,
+  getAssignmentBackupLimit,
 } from "@/lib/user-pools";
 import {
   canPromoteToActive,
@@ -115,7 +116,8 @@ export async function POST(
       ownerUid,
       country,
       actor.uid,
-      activePoolSize
+      activePoolSize,
+      getAssignmentBackupLimit(assignments, country)
     );
 
     return NextResponse.json({

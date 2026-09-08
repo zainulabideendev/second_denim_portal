@@ -6,6 +6,7 @@ import { writeAuditLog } from "@/lib/audit";
 import {
   getUserPoolAssignments,
   getAssignmentSizePerLane,
+  getAssignmentBackupLimit,
 } from "@/lib/user-pools";
 import { getPoolConfig } from "@/lib/pool-config";
 
@@ -70,12 +71,13 @@ export async function autoRefillUserPoolForCountry(
   uid: string,
   country: Country,
   actorUid: string,
-  activePoolSize: number
+  activePoolSize: number,
+  backupLimitOverride?: number | null
 ): Promise<number> {
   const db = adminDb();
   let filled = 0;
 
-  const backupLimit = getBackupLimit(activePoolSize);
+  const backupLimit = getBackupLimit(activePoolSize, backupLimitOverride);
 
   const poolSnap = await db
     .collection("proxies")
@@ -113,7 +115,8 @@ export async function autoRefillUserPools(
       uid,
       assignment.country,
       actorUid,
-      assignment.sizePerLane
+      assignment.sizePerLane,
+      assignment.backupLimit
     );
   }
 
@@ -127,13 +130,15 @@ export async function autoRefillUserPool(
   actorUid: string
 ): Promise<number> {
   const config = await getPoolConfig();
+  const assignments = await getUserPoolAssignments(uid);
   return autoRefillUserPoolForCountry(
     uid,
     country,
     actorUid,
-    getAssignmentSizePerLane(await getUserPoolAssignments(uid), country) ??
+    getAssignmentSizePerLane(assignments, country) ??
       config.byCountry[country]?.sizePerLane ??
-      config.defaultSizePerLane
+      config.defaultSizePerLane,
+    getAssignmentBackupLimit(assignments, country)
   );
 }
 
@@ -148,7 +153,8 @@ export async function handleBanCascade(
   country: Country,
   actorUid: string,
   notes: string,
-  activePoolSize: number
+  activePoolSize: number,
+  backupLimit?: number | null
 ): Promise<{ promoted: string[]; refilled: boolean }> {
   const db = adminDb();
 
@@ -162,7 +168,8 @@ export async function handleBanCascade(
     uid,
     country,
     actorUid,
-    activePoolSize
+    activePoolSize,
+    backupLimit
   );
 
   return { promoted: [], refilled: filled > 0 };

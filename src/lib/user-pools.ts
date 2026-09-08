@@ -22,6 +22,8 @@ function mapDoc(
     userEmail: d.userEmail,
     country: d.country,
     sizePerLane: d.sizePerLane,
+    backupLimit:
+      d.backupLimit != null ? Number(d.backupLimit) : getBackupLimit(d.sizePerLane),
     createdAt: toIso(d.createdAt),
     createdBy: d.createdBy,
   };
@@ -47,7 +49,7 @@ export async function syncUserPoolMeta(userId: string): Promise<void> {
   const assignments = await getUserPoolAssignments(userId);
   const poolCountries = assignments.map((a) => a.country);
   const activeProxyLimit = assignments.reduce(
-    (sum, a) => sum + getTotalPoolSlots(a.sizePerLane),
+    (sum, a) => sum + getTotalPoolSlots(a.sizePerLane, a.backupLimit),
     0
   );
 
@@ -96,7 +98,7 @@ export async function enrichPoolRows(
     });
 
     const filled = byLane.backup + byLane.active;
-    const total = getTotalPoolSlots(assignment.sizePerLane);
+    const total = getTotalPoolSlots(assignment.sizePerLane, assignment.backupLimit);
 
     return { ...assignment, filled, total, byLane };
   });
@@ -104,7 +106,11 @@ export async function enrichPoolRows(
 
 export interface CreatePoolsInput {
   userIds: string[];
-  countrySizes: Array<{ country: Country; sizePerLane: number }>;
+  countrySizes: Array<{
+    country: Country;
+    sizePerLane: number;
+    backupLimit: number;
+  }>;
   actorUid: string;
   usersById: Map<string, { name: string; email: string; role: string }>;
 }
@@ -152,7 +158,7 @@ export async function createUserCountryPools(
   for (const userId of userIds) {
     const user = usersById.get(userId)!;
 
-    for (const { country, sizePerLane } of countrySizes) {
+    for (const { country, sizePerLane, backupLimit } of countrySizes) {
       const ref = db.collection(COLLECTION).doc();
       await ref.set({
         userId,
@@ -160,6 +166,7 @@ export async function createUserCountryPools(
         userEmail: user.email,
         country,
         sizePerLane,
+        backupLimit,
         createdAt: now,
         createdBy: actorUid,
       });
@@ -178,4 +185,13 @@ export function getAssignmentSizePerLane(
 ): number | null {
   const match = assignments.find((a) => a.country === country);
   return match?.sizePerLane ?? null;
+}
+
+export function getAssignmentBackupLimit(
+  assignments: UserCountryPool[],
+  country: Country
+): number | null {
+  const match = assignments.find((a) => a.country === country);
+  if (!match) return null;
+  return getBackupLimit(match.sizePerLane, match.backupLimit);
 }

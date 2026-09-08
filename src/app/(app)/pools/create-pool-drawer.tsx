@@ -22,16 +22,22 @@ interface CreatePoolDrawerProps {
   onClose: () => void;
 }
 
+type CountryLimits = Record<Country, { active: number; backup: number }>;
+
+function defaultLimits(): CountryLimits {
+  return {
+    FR: { active: 3, backup: 6 },
+    BE: { active: 3, backup: 6 },
+    UK: { active: 3, backup: 6 },
+    DE: { active: 3, backup: 6 },
+  };
+}
+
 export function CreatePoolDrawer({ open, onClose }: CreatePoolDrawerProps) {
   const queryClient = useQueryClient();
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
   const [selectedCountries, setSelectedCountries] = useState<Country[]>([]);
-  const [sizes, setSizes] = useState<Record<Country, number>>({
-    FR: 3,
-    BE: 3,
-    UK: 3,
-    DE: 3,
-  });
+  const [limits, setLimits] = useState<CountryLimits>(defaultLimits);
 
   const { data: users } = useQuery({
     queryKey: ["users"],
@@ -45,7 +51,7 @@ export function CreatePoolDrawer({ open, onClose }: CreatePoolDrawerProps) {
     if (!open) {
       setSelectedUserIds([]);
       setSelectedCountries([]);
-      setSizes({ FR: 3, BE: 3, UK: 3, DE: 3 });
+      setLimits(defaultLimits());
     }
   }, [open]);
 
@@ -55,7 +61,8 @@ export function CreatePoolDrawer({ open, onClose }: CreatePoolDrawerProps) {
         userIds: selectedUserIds,
         countrySizes: selectedCountries.map((country) => ({
           country,
-          sizePerLane: sizes[country],
+          sizePerLane: limits[country].active,
+          backupLimit: limits[country].backup,
         })),
       }),
     onSuccess: (result) => {
@@ -83,10 +90,21 @@ export function CreatePoolDrawer({ open, onClose }: CreatePoolDrawerProps) {
     );
   }
 
+  function setLimit(country: Country, field: "active" | "backup", value: number) {
+    const max = field === "active" ? 10 : 20;
+    setLimits((prev) => ({
+      ...prev,
+      [country]: {
+        ...prev[country],
+        [field]: Math.max(field === "backup" ? 0 : 1, Math.min(max, value || 0)),
+      },
+    }));
+  }
+
   const canSubmit =
     selectedUserIds.length > 0 &&
     selectedCountries.length > 0 &&
-    selectedCountries.every((c) => sizes[c] >= 1);
+    selectedCountries.every((c) => limits[c].active >= 1 && limits[c].backup >= 0);
 
   return (
     <Sheet open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
@@ -97,12 +115,11 @@ export function CreatePoolDrawer({ open, onClose }: CreatePoolDrawerProps) {
             Create Pool
           </SheetTitle>
           <SheetDescription>
-            Assign country pools to one or more salesmen. Each user can only have one pool per country.
+            Assign country pools to one or more salesmen. Set active and backup limits separately.
           </SheetDescription>
         </SheetHeader>
 
         <SheetBody className="flex-1 space-y-6">
-          {/* Step 1: Users */}
           <div className="space-y-3">
             <Label className="text-sm font-semibold">1. Select users</Label>
             <p className="text-xs text-muted-foreground">Choose one or more salesmen</p>
@@ -137,7 +154,6 @@ export function CreatePoolDrawer({ open, onClose }: CreatePoolDrawerProps) {
 
           <Separator />
 
-          {/* Step 2: Countries */}
           <div className="space-y-3">
             <Label className="text-sm font-semibold">2. Select countries</Label>
             <p className="text-xs text-muted-foreground">Choose one or more countries</p>
@@ -165,45 +181,59 @@ export function CreatePoolDrawer({ open, onClose }: CreatePoolDrawerProps) {
 
           <Separator />
 
-          {/* Step 3: Size per country */}
           <div className="space-y-3">
-            <Label className="text-sm font-semibold">3. Pool size per country</Label>
+            <Label className="text-sm font-semibold">3. Active & backup per country</Label>
             <p className="text-xs text-muted-foreground">
-              Active account limit per country. Backup auto-fills from pool (size × 2). Active is manual only.
+              Active = live accounts. Backup = staging slots auto-filled from inventory.
             </p>
             {selectedCountries.length === 0 ? (
               <p className="text-sm text-muted-foreground">Select countries above</p>
             ) : (
               <div className="space-y-2">
-                {selectedCountries.map((country) => (
-                  <div
-                    key={country}
-                    className="flex items-center justify-between gap-3 rounded-md border px-3 py-2"
-                  >
-                    <span className="text-sm font-medium">{COUNTRY_LABELS[country]}</span>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        type="number"
-                        min={1}
-                        max={10}
-                        className="w-20 h-8"
-                        value={sizes[country]}
-                        onChange={(e) =>
-                          setSizes((prev) => ({
-                            ...prev,
-                            [country]: Math.max(
-                              1,
-                              Math.min(10, Number(e.target.value) || 1)
-                            ),
-                          }))
-                        }
-                      />
-                      <span className="text-xs text-muted-foreground whitespace-nowrap">
-                        active ({sizes[country] * 3} total)
-                      </span>
+                {selectedCountries.map((country) => {
+                  const { active, backup } = limits[country];
+                  return (
+                    <div
+                      key={country}
+                      className="rounded-md border px-3 py-3 space-y-2"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-medium">{COUNTRY_LABELS[country]}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {active + backup} total slots
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <Label className="text-xs text-muted-foreground">Active</Label>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={10}
+                            className="h-8"
+                            value={active}
+                            onChange={(e) =>
+                              setLimit(country, "active", Number(e.target.value))
+                            }
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs text-muted-foreground">Backup</Label>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={20}
+                            className="h-8"
+                            value={backup}
+                            onChange={(e) =>
+                              setLimit(country, "backup", Number(e.target.value))
+                            }
+                          />
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

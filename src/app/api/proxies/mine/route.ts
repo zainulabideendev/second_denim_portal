@@ -11,6 +11,7 @@ import { emptyCountryPoolLanes } from "@/lib/pool-config";
 import {
   getUserPoolAssignments,
   getAssignmentSizePerLane,
+  getAssignmentBackupLimit,
 } from "@/lib/user-pools";
 import {
   canPromoteToActive,
@@ -50,8 +51,9 @@ export async function GET() {
     const pools: Partial<Record<Country, CountryPoolLanes>> = {};
     for (const country of poolCountries) {
       const activePoolSize = getAssignmentSizePerLane(assignments, country) ?? 3;
+      const backupLimit = getAssignmentBackupLimit(assignments, country);
       pools[country] = {
-        ...emptyCountryPoolLanes(activePoolSize),
+        ...emptyCountryPoolLanes(activePoolSize, backupLimit),
       };
     }
 
@@ -74,6 +76,9 @@ export async function GET() {
     for (const country of poolCountries) {
       const pool = pools[country]!;
       const activePoolSize = pool.sizePerLane;
+      const backupLimit =
+        getAssignmentBackupLimit(assignments, country) ??
+        getBackupLimit(activePoolSize);
 
       for (const lane of POOL_LANES) {
         pool[lane].sort((a, b) => {
@@ -86,7 +91,7 @@ export async function GET() {
 
       const counts = getActivePoolCounts(pool.active, country);
 
-      pool.backupLimit = getBackupLimit(activePoolSize);
+      pool.backupLimit = backupLimit;
       pool.activeLimit = getActiveLimit(activePoolSize);
       pool.restrictedLimit = getRestrictedLimit(activePoolSize);
       pool.activeWorkingCount = counts.working;
@@ -94,7 +99,7 @@ export async function GET() {
       pool.canPromote = canPromoteToActive(counts, pool.activeLimit);
       pool.canRestrict = canRestrictActive(counts, pool.activeLimit);
       pool.poolSize = pool.backup.length + pool.active.length;
-      pool.totalSlots = getTotalPoolSlots(activePoolSize);
+      pool.totalSlots = getTotalPoolSlots(activePoolSize, backupLimit);
 
       poolSize += pool.poolSize;
       totalSlots += pool.totalSlots;

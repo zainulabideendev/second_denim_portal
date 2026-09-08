@@ -49,6 +49,18 @@ NEXT_PUBLIC_FIREBASE_PROJECT_ID=...
 AUTH_COOKIE_SECRET=<openssl rand -hex 32>
 CRON_SECRET=<openssl rand -hex 32>
 NEXT_PUBLIC_BASE_URL=http://localhost:3000
+
+# Optional — Proxy-Cheap auto-sync (every 12 hours). One account per country.
+PROXY_CHEAP_UK_API_KEY=...
+PROXY_CHEAP_UK_API_SECRET=...
+PROXY_CHEAP_BE_API_KEY=...
+PROXY_CHEAP_BE_API_SECRET=...
+PROXY_CHEAP_FR_API_KEY=...
+PROXY_CHEAP_FR_API_SECRET=...
+# Optional per-account order IDs:
+# PROXY_CHEAP_UK_ORDER_IDS=123,456
+# PROXY_CHEAP_BE_ORDER_IDS=...
+# PROXY_CHEAP_FR_ORDER_IDS=...
 ```
 
 ### 3. Firestore Security Rules
@@ -116,11 +128,31 @@ number, country, provider, purchasedAt, expiresAt
 
 Both accept comma or semicolon delimiters. `purchasedAt` and `expiresAt` default to today and +30 days if omitted.
 
-## Cron Job (Expiry)
+## Cron Jobs
+
+### Expiry
 
 The `/api/cron/expire-items` route runs daily (configured in `vercel.json` for Vercel Cron). It sets `status: 'expired'` on any proxy/number whose `expiresAt` has passed.
 
-On cron-job.org (free alternative): hit `POST https://your-domain/api/cron/expire-items` daily with header `x-cron-secret: <your CRON_SECRET>`.
+### Proxy-Cheap sync
+
+The `/api/cron/sync-proxy-cheap` route runs every 12 hours (`0 */12 * * *`). It fetches ACTIVE proxies from **three** Proxy-Cheap accounts (UK / BE / FR), forces `country` from the account used, and stores `host`, `port`, `username`, `password`, `status` (`fresh`), `country`, and `proxyCheapId`.
+
+Matching is by **`proxyCheapId`** (the Proxy-Cheap proxy id) only: if that id already exists → skip (existing docs are never updated); if new → insert.
+
+Requires at least one account key pair:
+`PROXY_CHEAP_UK_API_KEY` + `PROXY_CHEAP_UK_API_SECRET`,
+`PROXY_CHEAP_BE_API_KEY` + `PROXY_CHEAP_BE_API_SECRET`,
+and/or `PROXY_CHEAP_FR_API_KEY` + `PROXY_CHEAP_FR_API_SECRET`.
+
+Dry-run (no DB write): `GET /api/cron/sync-proxy-cheap?dryRun=true` with `x-cron-secret`.
+
+On cron-job.org (free alternative / Hobby plan):
+
+- `POST https://your-domain/api/cron/expire-items` daily with header `x-cron-secret: <your CRON_SECRET>`
+- `POST https://your-domain/api/cron/sync-proxy-cheap` every 12 hours with the same header
+
+Vercel Cron may call with `GET` and `Authorization: Bearer <CRON_SECRET>`; the sync route accepts both.
 
 ## Pages
 

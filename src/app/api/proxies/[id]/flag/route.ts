@@ -7,6 +7,7 @@ import { handleBanCascade, notifyManagers } from "@/lib/utils-server";
 import {
   getUserPoolAssignments,
   getAssignmentSizePerLane,
+  getAssignmentBackupLimit,
 } from "@/lib/user-pools";
 import type { Country } from "@/lib/types";
 
@@ -61,10 +62,12 @@ export async function POST(
     const country = proxyData.country as Country;
 
     let activePoolSize = 3;
+    let backupLimit: number | null = null;
     if (ownerUid) {
       const assignments = await getUserPoolAssignments(ownerUid);
       activePoolSize =
         getAssignmentSizePerLane(assignments, country) ?? activePoolSize;
+      backupLimit = getAssignmentBackupLimit(assignments, country);
     }
 
     const cascadeResult = ownerUid
@@ -74,7 +77,8 @@ export async function POST(
           country,
           actor.uid,
           notes,
-          activePoolSize
+          activePoolSize,
+          backupLimit
         )
       : { promoted: [], refilled: false };
 

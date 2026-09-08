@@ -3,19 +3,31 @@ import type { Country, ProxyLane } from "@/lib/types";
 export const BACKUP_MULTIPLIER = 2;
 export const POOL_TOTAL_MULTIPLIER = 3;
 
-/** Max proxies in the backup column (pool size × 2). */
-export function getBackupLimit(activePoolSize: number): number {
+/**
+ * Max proxies in the backup column.
+ * Uses explicit backupLimit when set; otherwise falls back to active × 2 (legacy).
+ */
+export function getBackupLimit(
+  activePoolSize: number,
+  backupLimit?: number | null
+): number {
+  if (backupLimit != null && Number.isFinite(backupLimit) && backupLimit >= 0) {
+    return Math.floor(backupLimit);
+  }
   return activePoolSize * BACKUP_MULTIPLIER;
 }
 
-/** Max proxies in the active column (= admin pool size). */
+/** Max proxies in the active column (= admin active limit). */
 export function getActiveLimit(activePoolSize: number): number {
   return activePoolSize;
 }
 
 /** Total proxy slots per country pool (backup + active). */
-export function getTotalPoolSlots(activePoolSize: number): number {
-  return activePoolSize * POOL_TOTAL_MULTIPLIER;
+export function getTotalPoolSlots(
+  activePoolSize: number,
+  backupLimit?: number | null
+): number {
+  return getActiveLimit(activePoolSize) + getBackupLimit(activePoolSize, backupLimit);
 }
 
 /** Map legacy lane values to the current backup/active model. */

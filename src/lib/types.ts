@@ -36,7 +36,10 @@ export interface UserCountryPool {
   userName: string;
   userEmail: string;
   country: Country;
+  /** Max active accounts */
   sizePerLane: number;
+  /** Max backup accounts — optional on legacy docs (falls back to sizePerLane × 2) */
+  backupLimit?: number;
   createdAt: string;
   createdBy: string;
 }
@@ -75,8 +78,8 @@ export type ProxyStatus =
  * backup → create Gmail + Vinted accounts; promote to active when ready
  * active → live accounts in use
  *
- * Admin pool size (sizePerLane) = max active accounts.
- * Backup limit = sizePerLane × 2. Total slots = sizePerLane × 3.
+ * Admin active limit = sizePerLane.
+ * Backup limit = backupLimit when set, else sizePerLane × 2 (legacy).
  */
 export type ProxyLane = "backup" | "active";
 
@@ -124,6 +127,8 @@ export interface Proxy {
   assignedAt: string | null;
   batchId: string;
   notes: string;
+  /** Proxy-Cheap proxy id — used by cron to skip already-imported proxies */
+  proxyCheapId?: string | null;
   /** Pool lane — only set when status === "assigned" */
   lane?: ProxyLane;
   /** True once salesman has created Gmail + Vinted on this backup proxy */

@@ -6,7 +6,7 @@ import {
   DEFAULT_POOL_CONFIG,
   MAX_POOL_COUNTRIES,
 } from "@/lib/types";
-import { getTotalPoolSlots } from "@/lib/pool-utils";
+import { getBackupLimit, getTotalPoolSlots } from "@/lib/pool-utils";
 import { toIso } from "@/lib/utils-server";
 
 const CONFIG_DOC = "settings/poolConfig";
@@ -81,17 +81,20 @@ export async function savePoolConfig(
   return getPoolConfig();
 }
 
-export function emptyCountryPoolLanes(activePoolSize: number) {
+export function emptyCountryPoolLanes(
+  activePoolSize: number,
+  backupLimitOverride?: number | null
+) {
   const lanes: Record<ProxyLane, never[]> = {
     backup: [],
     active: [],
   };
-  const backupLimit = activePoolSize * 2;
+  const backupLimit = getBackupLimit(activePoolSize, backupLimitOverride);
   const activeLimit = activePoolSize;
   return {
     ...lanes,
     poolSize: 0,
-    totalSlots: getTotalPoolSlots(activePoolSize),
+    totalSlots: getTotalPoolSlots(activePoolSize, backupLimit),
     activeLimit,
     backupLimit,
     sizePerLane: activePoolSize,

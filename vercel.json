@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/expire-items",
       "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron/sync-proxy-cheap",
+      "schedule": "0 */12 * * *"
     }
   ]
 }

@@ -56,7 +56,8 @@ export function PoolsAdminView() {
             <TableRow className="bg-muted/40">
               <TableHead>User</TableHead>
               <TableHead>Country</TableHead>
-              <TableHead>Active limit</TableHead>
+              <TableHead>Active</TableHead>
+              <TableHead>Backup</TableHead>
               <TableHead>Total slots</TableHead>
               <TableHead>Fill status</TableHead>
               <TableHead>Lanes</TableHead>
@@ -67,7 +68,7 @@ export function PoolsAdminView() {
             {isLoading ? (
               Array.from({ length: 4 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 7 }).map((_, j) => (
+                  {Array.from({ length: 8 }).map((_, j) => (
                     <TableCell key={j}>
                       <Skeleton className="h-4 w-full" />
                     </TableCell>
@@ -76,7 +77,7 @@ export function PoolsAdminView() {
               ))
             ) : !pools?.length ? (
               <TableRow>
-                <TableCell colSpan={7} className="h-56">
+                <TableCell colSpan={8} className="h-56">
                   <EmptyState
                     icon={Layers}
                     title="No pools yet"
@@ -101,6 +102,7 @@ export function PoolsAdminView() {
                     <Badge variant="outline">{COUNTRY_LABELS[pool.country]}</Badge>
                   </TableCell>
                   <TableCell className="text-sm">{pool.sizePerLane}</TableCell>
+                  <TableCell className="text-sm">{pool.backupLimit ?? "—"}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">{pool.total}</TableCell>
                   <TableCell>
                     <span

@@ -28,6 +28,8 @@ import { toast } from "sonner";
 import { AssignDialog } from "./assign-dialog";
 import { BulkImportButton } from "@/components/bulk-import-dialog";
 import { AutoSyncButton } from "@/components/auto-sync-button";
+import { FetchProxiesButton } from "@/components/fetch-proxies-button";
+import { AddProxyButton } from "@/components/add-proxy-sheet";
 import { ProxyDetailSheet } from "@/components/inventory-detail-sheet";
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
@@ -225,7 +227,9 @@ export function ProxyInventoryTable({ defaultUser }: { defaultUser?: string }) {
               Clear filters
             </button>
           )}
+          <FetchProxiesButton />
           <AutoSyncButton />
+          <AddProxyButton />
           <BulkImportButton type="proxy" />
         </div>
       </div>

@@ -28,6 +28,7 @@ const createSchema = z.object({
       z.object({
         country: z.enum(["FR", "BE", "UK", "DE"]),
         sizePerLane: z.number().int().min(1).max(10),
+        backupLimit: z.number().int().min(0).max(20),
       })
     )
     .min(1),
@@ -48,10 +49,13 @@ export async function POST(request: NextRequest) {
 
     const uniqueUserIds = [...new Set(parsed.data.userIds)];
     const uniqueCountries = new Map(
-      parsed.data.countrySizes.map((c) => [c.country, c.sizePerLane])
+      parsed.data.countrySizes.map((c) => [
+        c.country,
+        { sizePerLane: c.sizePerLane, backupLimit: c.backupLimit },
+      ])
     );
     const countrySizes = [...uniqueCountries.entries()].map(
-      ([country, sizePerLane]) => ({ country, sizePerLane })
+      ([country, sizes]) => ({ country, ...sizes })
     );
 
     const db = adminDb();
@@ -86,13 +90,14 @@ export async function POST(request: NextRequest) {
     });
 
     let filled = 0;
-    for (const { country, sizePerLane } of countrySizes) {
+    for (const { country, sizePerLane, backupLimit } of countrySizes) {
       for (const userId of uniqueUserIds) {
         filled += await autoRefillUserPoolForCountry(
           userId,
           country,
           actor.uid,
-          sizePerLane
+          sizePerLane,
+          backupLimit
         );
       }
     }
