@@ -233,6 +233,8 @@ export type AuditAction =
   | "pool.config_updated"
   | "pool.user_countries_updated"
   | "pool.created"
+  | "pool.updated"
+  | "pool.deleted"
   | "email.imported"
   | "email.assigned"
   | "email.revoked"

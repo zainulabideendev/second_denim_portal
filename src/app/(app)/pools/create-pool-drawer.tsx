@@ -66,9 +66,7 @@ export function CreatePoolDrawer({ open, onClose }: CreatePoolDrawerProps) {
         })),
       }),
     onSuccess: (result) => {
-      toast.success(
-        `Created ${result.created} pool(s)${result.filled ? ` — ${result.filled} proxy(ies) assigned` : ""}`
-      );
+      toast.success(`Created ${result.created} pool(s) — no proxies auto-assigned`);
       queryClient.invalidateQueries({ queryKey: ["pools"] });
       queryClient.invalidateQueries({ queryKey: ["users"] });
       onClose();
@@ -184,7 +182,7 @@ export function CreatePoolDrawer({ open, onClose }: CreatePoolDrawerProps) {
           <div className="space-y-3">
             <Label className="text-sm font-semibold">3. Active & backup per country</Label>
             <p className="text-xs text-muted-foreground">
-              Active = live accounts. Backup = staging slots auto-filled from inventory.
+              Active = live account limit. Backup = staging limit. Proxies are not auto-assigned on create.
             </p>
             {selectedCountries.length === 0 ? (
               <p className="text-sm text-muted-foreground">Select countries above</p>
