@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/cron/sync-proxy-cheap",
-      "schedule": "50 16 * * *"
+      "schedule": "10 17 * * *"
     }
   ]
 }
