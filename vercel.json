@@ -6,7 +6,7 @@
     },
     {
       "path": "/api/cron/sync-proxy-cheap",
-      "schedule": "0 */12 * * *"
+      "schedule": "30 16 * * *"
     }
   ]
 }

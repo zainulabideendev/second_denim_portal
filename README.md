@@ -50,7 +50,7 @@ AUTH_COOKIE_SECRET=<openssl rand -hex 32>
 CRON_SECRET=<openssl rand -hex 32>
 NEXT_PUBLIC_BASE_URL=http://localhost:3000
 
-# Optional — Proxy-Cheap auto-sync (every 12 hours). One account per country.
+# Optional — Proxy-Cheap auto-sync (daily 9:30 PM Pakistan / 16:30 UTC). One account per country.
 PROXY_CHEAP_UK_API_KEY=...
 PROXY_CHEAP_UK_API_SECRET=...
 PROXY_CHEAP_BE_API_KEY=...
@@ -136,7 +136,7 @@ The `/api/cron/expire-items` route runs daily (configured in `vercel.json` for V
 
 ### Proxy-Cheap sync
 
-The `/api/cron/sync-proxy-cheap` route runs every 12 hours (`0 */12 * * *`). It fetches ACTIVE proxies from **three** Proxy-Cheap accounts (UK / BE / FR), forces `country` from the account used, and stores `host`, `port`, `username`, `password`, `status` (`fresh`), `country`, and `proxyCheapId`.
+The `/api/cron/sync-proxy-cheap` route runs once daily at **9:30 PM Pakistan time** (`30 16 * * *` UTC). It fetches ACTIVE proxies from **three** Proxy-Cheap accounts (UK / BE / FR), forces `country` from the account used, and stores `host`, `port`, `username`, `password`, `status` (`fresh`), `country`, and `proxyCheapId`.
 
 Matching is by **`proxyCheapId`** (the Proxy-Cheap proxy id) only: if that id already exists → skip (existing docs are never updated); if new → insert.
 
@@ -150,7 +150,7 @@ Dry-run (no DB write): `GET /api/cron/sync-proxy-cheap?dryRun=true` with `x-cron
 On cron-job.org (free alternative / Hobby plan):
 
 - `POST https://your-domain/api/cron/expire-items` daily with header `x-cron-secret: <your CRON_SECRET>`
-- `POST https://your-domain/api/cron/sync-proxy-cheap` every 12 hours with the same header
+- `POST https://your-domain/api/cron/sync-proxy-cheap` daily at 9:30 PM Pakistan time with the same header
 
 Vercel Cron may call with `GET` and `Authorization: Bearer <CRON_SECRET>`; the sync route accepts both.
 
