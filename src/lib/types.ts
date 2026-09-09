@@ -68,6 +68,7 @@ export interface PoolConfig {
 export type ProxyStatus =
   | "fresh"
   | "available"
+  | "active"
   | "assigned"
   | "expired"
   | "flagged"

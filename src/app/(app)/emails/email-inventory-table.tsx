@@ -28,7 +28,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { BulkImportButton } from "@/components/bulk-import-dialog";
-import { AutoSyncButton } from "@/components/auto-sync-button";
+// import { AutoSyncButton } from "@/components/auto-sync-button";
 import { EmailDetailSheet } from "@/components/inventory-detail-sheet";
 import {
   TablePagination,
@@ -217,7 +217,7 @@ export function EmailInventoryTable() {
               Clear filters
             </button>
           )}
-          <AutoSyncButton />
+          {/* <AutoSyncButton /> */}
           <BulkImportButton type="email" />
         </div>
       </div>

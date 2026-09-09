@@ -82,22 +82,24 @@ export async function unlinkProxyEmail(
   });
 }
 
-function sortByCreated(
-  a: FirebaseFirestore.QueryDocumentSnapshot,
-  b: FirebaseFirestore.QueryDocumentSnapshot
-) {
-  const aAt =
-    a.data().createdAt?.toDate?.() ??
-    a.data().purchasedAt?.toDate?.() ??
-    new Date(0);
-  const bAt =
-    b.data().createdAt?.toDate?.() ??
-    b.data().purchasedAt?.toDate?.() ??
-    new Date(0);
-  return aAt.getTime() - bAt.getTime();
-}
+// function sortByCreated(
+//   a: FirebaseFirestore.QueryDocumentSnapshot,
+//   b: FirebaseFirestore.QueryDocumentSnapshot
+// ) {
+//   const aAt =
+//     a.data().createdAt?.toDate?.() ??
+//     a.data().purchasedAt?.toDate?.() ??
+//     new Date(0);
+//   const bAt =
+//     b.data().createdAt?.toDate?.() ??
+//     b.data().purchasedAt?.toDate?.() ??
+//     new Date(0);
+//   return aAt.getTime() - bAt.getTime();
+// }
 
 /** Pair unsynced fresh proxies with unsynced fresh emails (1:1, FIFO). */
+// Auto Sync Fresh (proxy–email) — temporarily disabled
+/*
 export async function autoSyncFreshPairs(actorUid: string): Promise<{
   paired: number;
   freshProxies: number;
@@ -157,3 +159,4 @@ export async function autoSyncFreshPairs(actorUid: string): Promise<{
     pairs,
   };
 }
+*/

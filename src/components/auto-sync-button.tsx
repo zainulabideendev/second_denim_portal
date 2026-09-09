@@ -1,5 +1,7 @@
 "use client";
 
+// Auto Sync Fresh (proxy–email) — temporarily disabled
+/*
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
@@ -51,4 +53,9 @@ export function AutoSyncButton() {
       {mutation.isPending ? "Syncing…" : "Auto Sync Fresh"}
     </Button>
   );
+}
+*/
+
+export function AutoSyncButton() {
+  return null;
 }

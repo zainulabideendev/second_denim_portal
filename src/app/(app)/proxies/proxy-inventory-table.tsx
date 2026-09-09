@@ -19,15 +19,16 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Shield, MoreHorizontal, Search, Link2, Link2Off } from "lucide-react";
+import { Shield, MoreHorizontal, Search, Link2, Link2Off, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SyncEmailDialog } from "@/components/sync-dialogs";
+import { AddGmailDialog } from "@/components/add-gmail-dialog";
 import type { Email } from "@/lib/types";
 import { formatDate } from "@/lib/date-utils";
 import { toast } from "sonner";
 import { AssignDialog } from "./assign-dialog";
 import { BulkImportButton } from "@/components/bulk-import-dialog";
-import { AutoSyncButton } from "@/components/auto-sync-button";
+// import { AutoSyncButton } from "@/components/auto-sync-button";
 import { FetchProxiesButton } from "@/components/fetch-proxies-button";
 import { AddProxyButton } from "@/components/add-proxy-sheet";
 import { ProxyDetailSheet } from "@/components/inventory-detail-sheet";
@@ -50,7 +51,7 @@ const STATUS_OPTIONS = [
   { value: "all", label: "All statuses" },
   { value: "fresh", label: "Fresh" },
   { value: "available", label: "Available" },
-  { value: "assigned", label: "Active" },
+  { value: "active", label: "Active" },
   { value: "flagged", label: "Banned / Flagged" },
   { value: "expired", label: "Expired" },
   { value: "retired", label: "Retired" },
@@ -80,6 +81,7 @@ export function ProxyInventoryTable({ defaultUser }: { defaultUser?: string }) {
   const [pageSize, setPageSize] = useState(25);
   const [assignTarget, setAssignTarget] = useState<Proxy | null>(null);
   const [syncTarget, setSyncTarget] = useState<Proxy | null>(null);
+  const [addGmailTarget, setAddGmailTarget] = useState<Proxy | null>(null);
   const [detailTarget, setDetailTarget] = useState<Proxy | null>(null);
   const queryClient = useQueryClient();
 
@@ -145,7 +147,9 @@ export function ProxyInventoryTable({ defaultUser }: { defaultUser?: string }) {
     } else if (userFilter !== "all") {
       list = list.filter((p) => p.assignedTo === userFilter);
     }
-    if (statusFilter !== "all") {
+    if (statusFilter === "active") {
+      list = list.filter((p) => p.status === "active" || p.status === "assigned");
+    } else if (statusFilter !== "all") {
       list = list.filter((p) => p.status === statusFilter);
     }
     if (laneFilter === "none") {
@@ -228,7 +232,7 @@ export function ProxyInventoryTable({ defaultUser }: { defaultUser?: string }) {
             </button>
           )}
           <FetchProxiesButton />
-          <AutoSyncButton />
+          {/* <AutoSyncButton /> */}
           <AddProxyButton />
           <BulkImportButton type="proxy" />
         </div>
@@ -404,15 +408,28 @@ export function ProxyInventoryTable({ defaultUser }: { defaultUser?: string }) {
                             {proxy.syncedEmail.email}
                           </p>
                         )}
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-7 text-[11px] px-2"
-                          onClick={() => setSyncTarget(proxy)}
-                        >
-                          <Link2 className="h-3 w-3 mr-1" />
-                          {proxy.syncedEmailId ? "Change" : "Sync email"}
-                        </Button>
+                        {!proxy.syncedEmailId && (
+                          <>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-[11px] px-2"
+                              onClick={() => setAddGmailTarget(proxy)}
+                            >
+                              <Mail className="h-3 w-3 mr-1" />
+                              Add Gmail
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-[11px] px-2"
+                              onClick={() => setSyncTarget(proxy)}
+                            >
+                              <Link2 className="h-3 w-3 mr-1" />
+                              Sync email
+                            </Button>
+                          </>
+                        )}
                       </div>
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
@@ -494,6 +511,11 @@ export function ProxyInventoryTable({ defaultUser }: { defaultUser?: string }) {
         proxy={syncTarget}
         emails={emails ?? []}
         onClose={() => setSyncTarget(null)}
+      />
+
+      <AddGmailDialog
+        proxy={addGmailTarget}
+        onClose={() => setAddGmailTarget(null)}
       />
 
       <ProxyDetailSheet
