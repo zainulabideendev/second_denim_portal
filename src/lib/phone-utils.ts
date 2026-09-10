@@ -1,19 +1,30 @@
-import type { PhoneAccountStatus, PhoneStatus } from "./types";
+import type { PhoneAccountStatus, PhoneNumberType, PhoneStatus } from "./types";
 
 export const PHONE_ACCOUNT_STATUSES: PhoneAccountStatus[] = [
   "active",
-  "banned",
-  "banned_with_balance",
+  "inactive",
 ];
 
-export const PHONE_ACCOUNT_STATUS_LABELS: Record<PhoneAccountStatus, string> = {
+export const PHONE_ACCOUNT_STATUS_LABELS: Record<string, string> = {
   active: "Active",
-  banned: "Banned",
-  banned_with_balance: "Banned with balance",
+  inactive: "Inactive",
+  banned: "Inactive",
+  banned_with_balance: "Inactive",
+};
+
+export const PHONE_NUMBER_TYPES: PhoneNumberType[] = [
+  "temporary",
+  "permanent",
+];
+
+export const PHONE_NUMBER_TYPE_LABELS: Record<PhoneNumberType, string> = {
+  temporary: "Temporary",
+  permanent: "Permanent",
 };
 
 const ASSIGNED_STATUSES = new Set<string>([
   "active",
+  "inactive",
   "banned",
   "banned_with_balance",
   "assigned",
@@ -21,8 +32,15 @@ const ASSIGNED_STATUSES = new Set<string>([
 ]);
 
 export function normalizePhoneStatus(status: string): PhoneStatus {
-  if (status === "assigned") return "active";
-  if (status === "flagged") return "banned";
+  if (status === "assigned" || status === "active") return "active";
+  if (
+    status === "flagged" ||
+    status === "banned" ||
+    status === "banned_with_balance" ||
+    status === "inactive"
+  ) {
+    return "inactive";
+  }
   return status as PhoneStatus;
 }
 
@@ -37,13 +55,19 @@ export function isPhoneActiveStatus(status: string): boolean {
 
 export function isPhoneBannedStatus(status: string): boolean {
   const normalized = normalizePhoneStatus(status);
-  return normalized === "banned" || normalized === "banned_with_balance";
+  return normalized === "inactive";
 }
 
 export function phoneStatusMatchesTab(
   status: string,
-  tab: "active" | "banned" | "banned_with_balance"
+  tab: "active" | "inactive" | "banned" | "banned_with_balance"
 ): boolean {
   const normalized = normalizePhoneStatus(status);
-  return normalized === tab;
+  if (tab === "inactive") {
+    return normalized === "inactive";
+  }
+  if (tab === "active") {
+    return normalized === "active";
+  }
+  return status === tab;
 }

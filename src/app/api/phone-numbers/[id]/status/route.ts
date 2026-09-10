@@ -6,7 +6,7 @@ import { writeAuditLog } from "@/lib/audit";
 import { isPhoneAssignedStatus } from "@/lib/phone-utils";
 
 const statusSchema = z.object({
-  status: z.enum(["active", "banned", "banned_with_balance"]),
+  status: z.enum(["active", "inactive", "banned", "banned_with_balance"]),
 });
 
 export async function POST(

@@ -20,6 +20,10 @@ const statusConfig: Record<string, { label: string; className: string }> = {
     label: "Active",
     className: "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-400 dark:border-blue-800",
   },
+  inactive: {
+    label: "Inactive",
+    className: "bg-zinc-100 text-zinc-600 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700",
+  },
   assigned: {
     label: "Active",
     className: "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-400 dark:border-blue-800",

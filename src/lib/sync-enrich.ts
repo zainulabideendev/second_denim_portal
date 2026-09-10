@@ -74,6 +74,45 @@ export async function enrichEmailsWithSyncedProxies<
   }));
 }
 
+export async function enrichPhonesWithProxies<
+  T extends { id: string; proxyId?: string | null }
+>(phones: T[]) {
+  const proxyIds = [
+    ...new Set(
+      phones.map((p) => p.proxyId).filter((id): id is string => !!id)
+    ),
+  ];
+  if (!proxyIds.length) {
+    return phones.map((p) => ({ ...p, proxy: null }));
+  }
+
+  const db = adminDb();
+  const proxyDocs = await Promise.all(
+    proxyIds.map((id) => db.collection("proxies").doc(id).get())
+  );
+  const proxyMap = new Map(
+    proxyDocs
+      .filter((d) => d.exists)
+      .map((d) => {
+        const data = d.data()!;
+        return [
+          d.id,
+          {
+            id: d.id,
+            host: data.host,
+            port: data.port,
+            country: data.country,
+          },
+        ] as const;
+      })
+  );
+
+  return phones.map((p) => ({
+    ...p,
+    proxy: p.proxyId ? proxyMap.get(p.proxyId) ?? null : null,
+  }));
+}
+
 export function mapProxyDoc(
   doc: FirebaseFirestore.QueryDocumentSnapshot | FirebaseFirestore.DocumentSnapshot
 ) {
@@ -99,6 +138,10 @@ export function mapProxyDoc(
     restricted: d.restricted ?? false,
     syncedEmailId: d.syncedEmailId ?? null,
     syncedAt: d.syncedAt ? toIso(d.syncedAt) : null,
+    vintedUsername: d.vintedUsername ?? "",
+    vintedPassword: d.vintedPassword ?? "",
+    phoneId: d.phoneId ?? null,
+    phoneNumber: d.phoneNumber ?? null,
   };
 }
 

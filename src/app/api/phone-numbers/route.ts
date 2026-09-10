@@ -4,6 +4,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import { toIso } from "@/lib/utils-server";
 import { writeAuditLog } from "@/lib/audit";
+import { enrichPhonesWithProxies } from "@/lib/sync-enrich";
 import { FieldValue } from "firebase-admin/firestore";
 
 const createPhoneSchema = z.object({
@@ -13,8 +14,10 @@ const createPhoneSchema = z.object({
   purchasedAt: z.string().datetime({ offset: true }).or(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)),
   expiresAt: z.string().datetime({ offset: true }).or(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)),
   notes: z.string().optional().default(""),
-  assignedTo: z.string().min(1),
-  status: z.enum(["active", "banned", "banned_with_balance"]),
+  proxyId: z.string().optional(),
+  numberType: z.enum(["temporary", "permanent"]).optional().default("temporary"),
+  proxyId: z.string().optional(),
+  status: z.enum(["active", "inactive", "banned", "balnebe"]).optional().default("active"),
 });
 
 export async function GET(request: NextRequest) {
@@ -48,11 +51,13 @@ export async function GET(request: NextRequest) {
         purchasedAt: toIso(d.purchasedAt),
         expiresAt: toIso(d.expiresAt),
         status: d.status,
+        numberType: d.numberType ?? "temporary",
         assignedTo: d.assignedTo ?? null,
         assignedAt: d.assignedAt ? toIso(d.assignedAt) : null,
         batchId: d.batchId ?? "",
         notes: d.notes ?? "",
         lane: d.lane ?? null,
+        proxyId: d.proxyId ?? null,
       };
     });
 
@@ -61,7 +66,9 @@ export async function GET(request: NextRequest) {
 
     phones.sort((a, b) => b.purchasedAt.localeCompare(a.purchasedAt));
 
-    return NextResponse.json({ success: true, data: phones });
+    const enriched = await enrichPhonesWithProxies(phones);
+
+    return NextResponse.json({ success: true, data: enriched });
   } catch (err) {
     return handleAuthError(err);
   }
@@ -69,7 +76,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const actor = await requireAuth(["admin", "manager"]);
+    const actor = await requireAuth(["admin", "manager", "salesman"]);
 
     const body = await request.json();
     const parsed = createPhoneSchema.safeParse(body);
@@ -81,16 +88,55 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { number, country, provider, purchasedAt, expiresAt, notes, assignedTo, status } =
+    const { number, country, provider, purchasedAt, expiresAt, notes, assignedTo, status, proxyId, numberType } =
       parsed.data;
     const db = adminDb();
 
-    const userDoc = await db.collection("users").doc(assignedTo).get();
+    let targetUserId = actor.uid;
+    if (actor.role === "salesman") {
+      targetUserId = actor.uid;
+      if (!proxyId) {
+        return NextResponse.json(
+          { success: false, error: "Please select the proxy for which this number is purchased." },
+          { status: 400 }
+        );
+      }
+    } else {
+      if (!assignedTo) {
+        return NextResponse.json(
+          { success: false, error: "Assigned user is required." },
+          { status: 400 }
+        );
+      }
+      targetUserId = assignedTo;
+    }
+
+    const userDoc = await db.collection("users").doc(targetUserId).get();
     if (!userDoc.exists) {
       return NextResponse.json(
         { success: false, error: "Assigned user not found." },
         { status: 404 }
       );
+    }
+
+    let proxyData: FirebaseFirestore.DocumentData | null = null;
+    let proxyRef: FirebaseFirestore.DocumentReference | null = null;
+    if (proxyId) {
+      proxyRef = db.collection("proxies").doc(proxyId);
+      const proxyDoc = await proxyRef.get();
+      if (!proxyDoc.exists) {
+        return NextResponse.json(
+          { success: false, error: "Selected proxy not found." },
+          { status: 404 }
+        );
+      }
+      proxyData = proxyDoc.data()!;
+      if (actor.role === "salesman" && proxyData.assignedTo !== actor.uid) {
+        return NextResponse.json(
+          { success: false, error: "You can only attach numbers to your assigned proxies." },
+          { status: 403 }
+        );
+      }
     }
 
     const existing = await db
@@ -110,19 +156,32 @@ export async function POST(request: NextRequest) {
     const now = FieldValue.serverTimestamp();
     const assignedAt = new Date();
 
-    await phoneRef.set({
+    const batch = db.batch();
+
+    batch.set(phoneRef, {
       country,
       number: number.trim(),
       provider: provider.trim(),
       purchasedAt: new Date(purchasedAt),
       expiresAt: new Date(expiresAt),
-      status,
-      assignedTo,
+      numberType: numberType ?? "temporary",
+      status: status ?? "active",
+      assignedTo: targetUserId,
       assignedAt,
       batchId: "",
       notes: notes ?? "",
+      proxyId: proxyId || null,
       createdAt: now,
     });
+
+    if (proxyRef) {
+      batch.update(proxyRef, {
+        phoneId: phoneRef.id,
+        phoneNumber: number.trim(),
+      });
+    }
+
+    await batch.commit();
 
     await writeAuditLog({
       actorUid: actor.uid,
@@ -135,8 +194,9 @@ export async function POST(request: NextRequest) {
         number: number.trim(),
         country,
         provider,
-        assignedTo,
-        status,
+        assignedTo: targetUserId,
+        status: status ?? "active",
+        proxyId: proxyId || null,
       },
     });
 
@@ -147,11 +207,21 @@ export async function POST(request: NextRequest) {
       provider: provider.trim(),
       purchasedAt: new Date(purchasedAt).toISOString(),
       expiresAt: new Date(expiresAt).toISOString(),
-      status,
-      assignedTo,
+      numberType: numberType ?? "temporary",
+      status: status ?? "active",
+      assignedTo: targetUserId,
       assignedAt: assignedAt.toISOString(),
       batchId: "",
       notes: notes ?? "",
+      proxyId: proxyId || null,
+      proxy: proxyData
+        ? {
+            id: proxyId!,
+            host: proxyData.host,
+            port: proxyData.port,
+            country: proxyData.country,
+          }
+        : null,
     };
 
     return NextResponse.json({ success: true, data: created }, { status: 201 });

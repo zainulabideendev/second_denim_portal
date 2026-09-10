@@ -521,6 +521,7 @@ export function ProxyInventoryTable({ defaultUser }: { defaultUser?: string }) {
       <ProxyDetailSheet
         proxy={detailTarget}
         user={detailTarget ? userMap.get(detailTarget.assignedTo ?? "") : undefined}
+        editable
         onClose={() => setDetailTarget(null)}
       />
     </div>

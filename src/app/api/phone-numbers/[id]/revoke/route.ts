@@ -27,7 +27,14 @@ export async function POST(
     const prev = doc.data()!;
     const newStatus = retire ? "retired" : "available";
 
-    await doc.ref.update({ status: newStatus, assignedTo: null, assignedAt: null });
+    await doc.ref.update({ status: newStatus, assignedTo: null, assignedAt: null, proxyId: null });
+
+    if (prev.proxyId) {
+      const proxyDoc = await db.collection("proxies").doc(prev.proxyId).get();
+      if (proxyDoc.exists && proxyDoc.data()?.phoneId === id) {
+        await proxyDoc.ref.update({ phoneId: null, phoneNumber: null });
+      }
+    }
 
     await writeAuditLog({
       actorUid: actor.uid,

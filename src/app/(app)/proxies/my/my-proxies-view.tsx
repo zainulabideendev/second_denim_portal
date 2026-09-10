@@ -19,7 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   Shield, AlertTriangle, Eye, EyeOff, ArrowUpCircle,
-  ExternalLink, Mail, Link2, CheckCircle2, Lock, Layers,
+  ExternalLink, Mail, Link2, CheckCircle2, Lock, Layers, Phone,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate } from "@/lib/date-utils";
@@ -97,6 +97,19 @@ function ProxyRow({
                 <Mail className="h-3 w-3 text-muted-foreground" />
                 <span className="font-mono text-xs truncate flex-1">{proxy.syncedEmail.email}</span>
                 <Link2 className="h-3 w-3 text-emerald-600" />
+              </div>
+            )}
+            {proxy.vintedUsername && (
+              <div className="flex items-center gap-2 pt-1 border-t border-border/50">
+                <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Vinted</span>
+                <span className="font-mono text-xs truncate flex-1">{proxy.vintedUsername}</span>
+              </div>
+            )}
+            {proxy.phoneNumber && (
+              <div className="flex items-center gap-2 pt-1 border-t border-border/50">
+                <Phone className="h-3 w-3 text-muted-foreground" />
+                <span className="font-mono text-xs truncate flex-1">{proxy.phoneNumber}</span>
+                <CopyButton value={proxy.phoneNumber} />
               </div>
             )}
           </div>
@@ -504,7 +517,7 @@ export function MyProxiesView({ user }: { user: AppUser }) {
         </>
       ) : null}
 
-      <ProxyDetailSheet proxy={detailProxy} user={user} onClose={() => setDetailProxy(null)} />
+      <ProxyDetailSheet proxy={detailProxy} user={user} editable onClose={() => setDetailProxy(null)} />
 
       <Dialog open={!!banTarget} onOpenChange={(v) => { if (!v) { setBanTarget(null); setBanNotes(""); } }}>
         <DialogContent className="sm:max-w-md">

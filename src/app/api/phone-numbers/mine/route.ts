@@ -3,6 +3,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import { toIso } from "@/lib/utils-server";
 import { isPhoneAssignedStatus } from "@/lib/phone-utils";
+import { enrichPhonesWithProxies } from "@/lib/sync-enrich";
 
 export async function GET() {
   try {
@@ -31,11 +32,14 @@ export async function GET() {
           assignedAt: d.assignedAt ? toIso(d.assignedAt) : null,
           batchId: d.batchId ?? "",
           notes: d.notes ?? "",
+          proxyId: d.proxyId ?? null,
         };
       })
       .sort((a, b) => (b.assignedAt ?? "").localeCompare(a.assignedAt ?? ""));
 
-    return NextResponse.json({ success: true, data: phones });
+    const enriched = await enrichPhonesWithProxies(phones);
+
+    return NextResponse.json({ success: true, data: enriched });
   } catch (err) {
     return handleAuthError(err);
   }

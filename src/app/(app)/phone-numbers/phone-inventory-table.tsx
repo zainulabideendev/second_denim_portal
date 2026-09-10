@@ -16,7 +16,7 @@ import { ExpiryBadge } from "@/components/ui/expiry-badge";
 import { CountryBadge } from "@/components/ui/country-badge";
 import { CopyButton } from "@/components/ui/copy-button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Phone, MoreHorizontal, Search, Plus } from "lucide-react";
+import { Phone, MoreHorizontal, Search, Plus, Shield } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { BulkImportButton } from "@/components/bulk-import-dialog";
@@ -35,6 +35,7 @@ type StatusTab =
   | "all"
   | "available"
   | "active"
+  | "inactive"
   | "banned"
   | "banned_with_balance"
   | "expired"
@@ -44,8 +45,7 @@ const STATUS_TABS: { key: StatusTab; label: string; color?: string }[] = [
   { key: "all", label: "All" },
   { key: "available", label: "Available", color: "text-emerald-600" },
   { key: "active", label: "Active", color: "text-blue-600" },
-  { key: "banned", label: "Banned", color: "text-amber-600" },
-  { key: "banned_with_balance", label: "Banned w/ balance", color: "text-orange-600" },
+  { key: "inactive", label: "Inactive", color: "text-amber-600" },
   { key: "expired", label: "Expired", color: "text-destructive" },
   { key: "retired", label: "Retired", color: "text-muted-foreground" },
 ];
@@ -95,6 +95,7 @@ export function PhoneInventoryTable({ defaultUser }: { defaultUser?: string }) {
       all: phones.length,
       available: phones.filter((p) => p.status === "available").length,
       active: phones.filter((p) => phoneStatusMatchesTab(p.status, "active")).length,
+      inactive: phones.filter((p) => phoneStatusMatchesTab(p.status, "inactive")).length,
       banned: phones.filter((p) => phoneStatusMatchesTab(p.status, "banned")).length,
       banned_with_balance: phones.filter((p) =>
         phoneStatusMatchesTab(p.status, "banned_with_balance")
@@ -107,7 +108,7 @@ export function PhoneInventoryTable({ defaultUser }: { defaultUser?: string }) {
   const filtered = useMemo(() => {
     if (!phones) return [];
     let list = phones;
-    if (activeTab === "active" || activeTab === "banned" || activeTab === "banned_with_balance") {
+    if (activeTab === "active" || activeTab === "inactive" || activeTab === "banned" || activeTab === "banned_with_balance") {
       list = list.filter((p) => phoneStatusMatchesTab(p.status, activeTab));
     } else if (activeTab !== "all") {
       list = list.filter((p) => p.status === activeTab);
@@ -203,7 +204,7 @@ export function PhoneInventoryTable({ defaultUser }: { defaultUser?: string }) {
             <TableRow className="bg-muted/40">
               <TableHead>Country</TableHead>
               <TableHead>Number</TableHead>
-              <TableHead>Provider</TableHead>
+              <TableHead>Number Type</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Assigned To</TableHead>
               <TableHead>Purchased</TableHead>
@@ -243,8 +244,14 @@ export function PhoneInventoryTable({ defaultUser }: { defaultUser?: string }) {
                         <span className="font-mono text-xs font-medium">{phone.number}</span>
                         <CopyButton value={phone.number} />
                       </div>
+                      {phone.proxy && (
+                        <div className="flex items-center gap-1 text-[11px] text-muted-foreground font-mono mt-0.5">
+                          <Shield className="h-3 w-3 text-emerald-600 shrink-0" />
+                          <span className="truncate">{phone.proxy.host}:{phone.proxy.port}</span>
+                        </div>
+                      )}
                     </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{phone.provider}</TableCell>
+                    <TableCell>{phone.numberType ?? "temporary"}</TableCell>
                     <TableCell><StatusBadge status={phone.status} /></TableCell>
                     <TableCell className="text-xs">
                       {assignedUser ? (

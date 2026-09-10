@@ -143,6 +143,14 @@ export interface Proxy {
   syncedEmail?: Pick<Email, "id" | "email" | "password"> | null;
   /** Paused active account — frees a working slot without banning */
   restricted?: boolean;
+  vintedUsername?: string;
+  vintedPassword?: string;
+  /** Linked phone number id */
+  phoneId?: string | null;
+  /** Populated/cached phone number string */
+  phoneNumber?: string | null;
+  /** Populated phone summary */
+  phone?: Pick<PhoneNumber, "id" | "number"> | null;
 }
 
 export interface ProxyWithUser extends Proxy {
@@ -151,7 +159,9 @@ export interface ProxyWithUser extends Proxy {
 
 // ─── Phone Numbers ────────────────────────────────────────────────────────────
 
-export type PhoneAccountStatus = "active" | "banned" | "banned_with_balance";
+export type PhoneAccountStatus = "active" | "inactive";
+
+export type PhoneNumberType = "temporary" | "permanent";
 
 export type PhoneStatus =
   | "available"
@@ -159,12 +169,15 @@ export type PhoneStatus =
   | "expired"
   | "retired"
   | "assigned" // legacy
-  | "flagged"; // legacy
+  | "flagged" // legacy
+  | "banned" // legacy
+  | "banned_with_balance"; // legacy
 
 export interface PhoneNumber {
   id: string;
   country: Country;
   number: string;
+  numberType?: PhoneNumberType;
   provider: string;
   purchasedAt: string;
   expiresAt: string;
@@ -173,6 +186,10 @@ export interface PhoneNumber {
   assignedAt: string | null;
   batchId: string;
   notes: string;
+  /** Linked proxy id */
+  proxyId?: string | null;
+  /** Populated in API responses when linked to a proxy */
+  proxy?: Pick<Proxy, "id" | "host" | "port" | "country"> | null;
 }
 
 export interface PhoneNumberWithUser extends PhoneNumber {
@@ -231,6 +248,7 @@ export type AuditAction =
   | "proxy.email_synced"
   | "proxy.email_unsynced"
   | "proxy.email_auto_synced"
+  | "proxy.updated"
   | "pool.config_updated"
   | "pool.user_countries_updated"
   | "pool.created"
