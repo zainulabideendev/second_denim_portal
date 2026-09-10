@@ -16,8 +16,8 @@ const createPhoneSchema = z.object({
   notes: z.string().optional().default(""),
   proxyId: z.string().optional(),
   numberType: z.enum(["temporary", "permanent"]).optional().default("temporary"),
-  proxyId: z.string().optional(),
   status: z.enum(["active", "inactive", "banned", "balnebe"]).optional().default("active"),
+  assignedTo: z.string().optional(),
 });
 
 export async function GET(request: NextRequest) {
