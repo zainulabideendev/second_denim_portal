@@ -18,7 +18,11 @@ export interface SyncProxyCheapResult {
   created: number;
   /** Proxies that would be written when dryRun is true. */
   wouldCreate: number;
-  /** Already in DB with matching proxyCheapId — left untouched. */
+  /** Existing proxies whose expiresAt was updated from Proxy-Cheap (0 when dryRun). */
+  updatedExpiry: number;
+  /** Existing proxies whose expiresAt would be updated when dryRun is true. */
+  wouldUpdateExpiry: number;
+  /** Already in DB with matching proxyCheapId AND matching expiresAt — left untouched. */
   skippedExisting: number;
   skippedOther: number;
   skippedWrongCountry: number;
@@ -42,18 +46,29 @@ export interface SyncProxyCheapResult {
   }>;
 }
 
-/** Load existing Proxy-Cheap proxy ids — never update those docs. */
-async function loadExistingProxyCheapIds(): Promise<Set<string>> {
+interface ExistingProxyEntry {
+  docId: string;
+  expiresAt: string | null;
+}
+
+/**
+ * Load existing Proxy-Cheap proxies — keyed by proxyCheapId.
+ * We store the Firestore doc id and expiresAt so we can detect stale expiry dates.
+ */
+async function loadExistingProxyCheapEntries(): Promise<Map<string, ExistingProxyEntry>> {
   const db = adminDb();
-  const snap = await db.collection("proxies").select("proxyCheapId").get();
-  const ids = new Set<string>();
+  const snap = await db.collection("proxies").select("proxyCheapId", "expiresAt").get();
+  const map = new Map<string, ExistingProxyEntry>();
   for (const doc of snap.docs) {
-    const id = doc.data().proxyCheapId;
-    if (id != null && String(id).trim() !== "") {
-      ids.add(String(id).trim());
-    }
+    const { proxyCheapId, expiresAt } = doc.data();
+    const id = proxyCheapId != null ? String(proxyCheapId).trim() : "";
+    if (id === "") continue;
+    map.set(id, {
+      docId: doc.id,
+      expiresAt: expiresAt != null ? String(expiresAt) : null,
+    });
   }
-  return ids;
+  return map;
 }
 
 async function writeNewProxies(
@@ -118,6 +133,35 @@ async function writeNewProxies(
   return { batchId, count: rows.length, proxyIds };
 }
 
+/**
+ * Update expiresAt on existing Proxy-Cheap proxy docs whose expiry has changed.
+ */
+async function updateExpiryDates(
+  updates: Array<{ docId: string; expiresAt: Date }>
+): Promise<void> {
+  if (updates.length === 0) return;
+  const db = adminDb();
+  let writeBatch = db.batch();
+  let opsInBatch = 0;
+
+  const commitIfNeeded = async (force = false) => {
+    if (opsInBatch === 0) return;
+    if (!force && opsInBatch < FIRESTORE_BATCH_LIMIT) return;
+    await writeBatch.commit();
+    writeBatch = db.batch();
+    opsInBatch = 0;
+  };
+
+  for (const { docId, expiresAt } of updates) {
+    const ref = db.collection("proxies").doc(docId);
+    writeBatch.update(ref, { expiresAt: expiresAt.toISOString() });
+    opsInBatch += 1;
+    await commitIfNeeded();
+  }
+
+  await commitIfNeeded(true);
+}
+
 export interface SyncProxyCheapOptions {
   actorUid?: string;
   /** When true: fetch + compare only — never write to Firestore. */
@@ -126,7 +170,10 @@ export interface SyncProxyCheapOptions {
 
 /**
  * Fetch from UK/BE/FR accounts.
- * Match on proxyCheapId: existing → skip (no update); new → insert.
+ * Match on proxyCheapId:
+ *   - new → insert;
+ *   - existing + same expiresAt → skip;
+ *   - existing + different expiresAt → update expiresAt from Proxy-Cheap.
  */
 export async function syncProxyCheapFromApi(
   options: SyncProxyCheapOptions = {}
@@ -142,16 +189,26 @@ export async function syncProxyCheapFromApi(
     accountsUsed,
   } = await fetchProxyCheapProxies();
 
-  const existingIds = await loadExistingProxyCheapIds();
+  const existingEntries = await loadExistingProxyCheapEntries();
   const fresh: MappedProxyCheapProxy[] = [];
+  const expiryUpdates: Array<{ docId: string; expiresAt: Date }> = [];
   let skippedExisting = 0;
 
   for (const row of fetched) {
-    if (existingIds.has(row.proxyCheapId)) {
-      skippedExisting += 1;
+    const existing = existingEntries.get(row.proxyCheapId);
+    if (existing) {
+      // Compare expiresAt — update if the API reports a different date
+      const apiExpiry = row.expiresAt.toISOString();
+      const storedExpiry = existing.expiresAt ?? "";
+      if (apiExpiry !== storedExpiry) {
+        expiryUpdates.push({ docId: existing.docId, expiresAt: row.expiresAt });
+      } else {
+        skippedExisting += 1;
+      }
       continue;
     }
-    existingIds.add(row.proxyCheapId);
+    // Track newly seen ids so duplicates within the same fetch are deduplicated
+    existingEntries.set(row.proxyCheapId, { docId: "", expiresAt: row.expiresAt.toISOString() });
     fresh.push(row);
   }
 
@@ -161,6 +218,8 @@ export async function syncProxyCheapFromApi(
       fetched: fetched.length,
       created: 0,
       wouldCreate: fresh.length,
+      updatedExpiry: 0,
+      wouldUpdateExpiry: expiryUpdates.length,
       skippedExisting,
       skippedOther,
       skippedWrongCountry,
@@ -185,12 +244,17 @@ export async function syncProxyCheapFromApi(
     };
   }
 
+  // Apply expiry updates even when there are no new proxies to insert
+  await updateExpiryDates(expiryUpdates);
+
   if (fresh.length === 0) {
     return {
       dryRun: false,
       fetched: fetched.length,
       created: 0,
       wouldCreate: 0,
+      updatedExpiry: expiryUpdates.length,
+      wouldUpdateExpiry: 0,
       skippedExisting,
       skippedOther,
       skippedWrongCountry,
@@ -217,6 +281,7 @@ export async function syncProxyCheapFromApi(
       skippedExisting,
       skippedOther,
       skippedWrongCountry,
+      updatedExpiry: expiryUpdates.length,
       accountsUsed,
       byAccount,
     },
@@ -227,6 +292,8 @@ export async function syncProxyCheapFromApi(
     fetched: fetched.length,
     created: count,
     wouldCreate: 0,
+    updatedExpiry: expiryUpdates.length,
+    wouldUpdateExpiry: 0,
     skippedExisting,
     skippedOther,
     skippedWrongCountry,
