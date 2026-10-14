@@ -31,10 +31,21 @@ export async function linkProxyToEmail(
 
   if (emailData.syncedProxyId && emailData.syncedProxyId !== proxyId) {
     const oldProxyRef = db.collection("proxies").doc(emailData.syncedProxyId);
-    batch.update(oldProxyRef, { syncedEmailId: null, syncedAt: null });
+    batch.update(oldProxyRef, {
+      syncedEmailId: null,
+      syncedAt: null,
+      syncedEmailEmail: null,
+      syncedEmailPassword: null,
+    });
   }
 
-  batch.update(proxyRef, { syncedEmailId: emailId, syncedAt: now });
+  // Denormalize email onto proxy so list APIs skip N+1 email reads
+  batch.update(proxyRef, {
+    syncedEmailId: emailId,
+    syncedAt: now,
+    syncedEmailEmail: emailData.email ?? "",
+    syncedEmailPassword: emailData.password ?? "",
+  });
   batch.update(emailRef, { syncedProxyId: proxyId, syncedAt: now });
 
   await batch.commit();
@@ -65,7 +76,12 @@ export async function unlinkProxyEmail(
   if (!emailId) throw new Error("Proxy is not synced to an email");
 
   const batch = db.batch();
-  batch.update(proxyRef, { syncedEmailId: null, syncedAt: null });
+  batch.update(proxyRef, {
+    syncedEmailId: null,
+    syncedAt: null,
+    syncedEmailEmail: null,
+    syncedEmailPassword: null,
+  });
   batch.update(db.collection("emails").doc(emailId), {
     syncedProxyId: null,
     syncedAt: null,

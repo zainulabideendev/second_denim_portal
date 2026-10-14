@@ -19,9 +19,10 @@ interface SyncEmailDialogProps {
   proxy: Proxy | null;
   emails: Email[];
   onClose: () => void;
+  onSaved?: () => void;
 }
 
-export function SyncEmailDialog({ proxy, emails, onClose }: SyncEmailDialogProps) {
+export function SyncEmailDialog({ proxy, emails, onClose, onSaved }: SyncEmailDialogProps) {
   const [emailId, setEmailId] = useState("");
   const queryClient = useQueryClient();
 
@@ -36,6 +37,7 @@ export function SyncEmailDialog({ proxy, emails, onClose }: SyncEmailDialogProps
       toast.success("Email synced with proxy");
       queryClient.invalidateQueries({ queryKey: ["proxies"] });
       queryClient.invalidateQueries({ queryKey: ["emails"] });
+      onSaved?.();
       onClose();
     },
     onError: (err: Error) => toast.error(err.message),
@@ -47,6 +49,7 @@ export function SyncEmailDialog({ proxy, emails, onClose }: SyncEmailDialogProps
       toast.success("Email unsynced");
       queryClient.invalidateQueries({ queryKey: ["proxies"] });
       queryClient.invalidateQueries({ queryKey: ["emails"] });
+      onSaved?.();
       onClose();
     },
     onError: (err: Error) => toast.error(err.message),

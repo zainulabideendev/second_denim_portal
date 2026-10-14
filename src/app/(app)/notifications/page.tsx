@@ -23,13 +23,14 @@ export default function NotificationsPage() {
   const queryClient = useQueryClient();
 
   const { data: notifications, isLoading } = useQuery({
-    queryKey: ["notifications"],
-    queryFn: () => api.get<Notification[]>("/api/notifications"),
+    queryKey: ["notifications", "page"],
+    queryFn: () => api.get<Notification[]>("/api/notifications?limit=50"),
   });
 
   const markReadMutation = useMutation({
     mutationFn: () => fetch("/api/notifications", { method: "PATCH" }).then((r) => r.json()),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["notifications"] }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["notifications"] }),
   });
 
   // Mark all as read when page opens

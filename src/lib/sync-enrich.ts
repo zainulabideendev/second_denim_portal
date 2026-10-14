@@ -1,16 +1,35 @@
 import { adminDb } from "@/lib/firebase-admin";
 import { toIso } from "@/lib/utils-server";
 
-export async function enrichProxiesWithSyncedEmails<
-  T extends { id: string; syncedEmailId?: string | null }
->(proxies: T[]) {
+type ProxyWithOptionalSync = {
+  id: string;
+  syncedEmailId?: string | null;
+  syncedEmail?: { id: string; email: string; password: string } | null;
+};
+
+/**
+ * Attach synced email details. Prefer denormalized fields already on the proxy
+ * (syncedEmailEmail / syncedEmailPassword) to avoid N+1 Firestore reads.
+ */
+export async function enrichProxiesWithSyncedEmails<T extends ProxyWithOptionalSync>(
+  proxies: T[]
+) {
+  const needFetch = proxies.filter(
+    (p) => p.syncedEmailId && !p.syncedEmail?.email
+  );
   const emailIds = [
     ...new Set(
-      proxies.map((p) => p.syncedEmailId).filter((id): id is string => !!id)
+      needFetch.map((p) => p.syncedEmailId).filter((id): id is string => !!id)
     ),
   ];
+
   if (!emailIds.length) {
-    return proxies.map((p) => ({ ...p, syncedEmail: null }));
+    return proxies.map((p) => ({
+      ...p,
+      syncedEmail: p.syncedEmailId
+        ? p.syncedEmail ?? null
+        : null,
+    }));
   }
 
   const db = adminDb();
@@ -29,9 +48,26 @@ export async function enrichProxiesWithSyncedEmails<
       })
   );
 
+  // Backfill denormalized fields so future list calls skip these reads
+  const backfills = needFetch
+    .map((p) => {
+      const snap = p.syncedEmailId ? emailMap.get(p.syncedEmailId) : null;
+      if (!snap) return null;
+      return db.collection("proxies").doc(p.id).update({
+        syncedEmailEmail: snap.email,
+        syncedEmailPassword: snap.password,
+      });
+    })
+    .filter(Boolean);
+  if (backfills.length) {
+    void Promise.all(backfills).catch(() => undefined);
+  }
+
   return proxies.map((p) => ({
     ...p,
-    syncedEmail: p.syncedEmailId ? emailMap.get(p.syncedEmailId) ?? null : null,
+    syncedEmail: p.syncedEmailId
+      ? p.syncedEmail ?? emailMap.get(p.syncedEmailId) ?? null
+      : null,
   }));
 }
 
@@ -138,6 +174,15 @@ export function mapProxyDoc(
     restricted: d.restricted ?? false,
     syncedEmailId: d.syncedEmailId ?? null,
     syncedAt: d.syncedAt ? toIso(d.syncedAt) : null,
+    // Denormalized sync snapshot (avoids email doc reads on list endpoints)
+    syncedEmail:
+      d.syncedEmailId && d.syncedEmailEmail
+        ? {
+            id: String(d.syncedEmailId),
+            email: String(d.syncedEmailEmail),
+            password: String(d.syncedEmailPassword ?? ""),
+          }
+        : null,
     vintedUsername: d.vintedUsername ?? "",
     vintedPassword: d.vintedPassword ?? "",
     phoneId: d.phoneId ?? null,

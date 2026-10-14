@@ -260,6 +260,7 @@ export type AuditAction =
   | "email.revoked"
   | "email.flagged"
   | "email.retired"
+  | "email.updated"
   | "phone.assigned"
   | "phone.revoked"
   | "phone.flagged"

@@ -20,9 +20,11 @@ import { Mail } from "lucide-react";
 interface AddGmailDialogProps {
   proxy: Proxy | null;
   onClose: () => void;
+  /** Called after a successful save (e.g. refresh detail sheet). */
+  onSaved?: (data: { emailId: string; proxyId: string; email: string }) => void;
 }
 
-export function AddGmailDialog({ proxy, onClose }: AddGmailDialogProps) {
+export function AddGmailDialog({ proxy, onClose, onSaved }: AddGmailDialogProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const queryClient = useQueryClient();
@@ -43,6 +45,7 @@ export function AddGmailDialog({ proxy, onClose }: AddGmailDialogProps) {
       toast.success(`Gmail saved and synced: ${data.email}`);
       queryClient.invalidateQueries({ queryKey: ["proxies"] });
       queryClient.invalidateQueries({ queryKey: ["emails"] });
+      onSaved?.(data);
       resetAndClose();
     },
     onError: (err: Error) => toast.error(err.message),

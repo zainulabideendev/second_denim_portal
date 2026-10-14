@@ -23,6 +23,7 @@ import { Shield, MoreHorizontal, Search, Link2, Link2Off, Mail } from "lucide-re
 import { Button } from "@/components/ui/button";
 import { SyncEmailDialog } from "@/components/sync-dialogs";
 import { AddGmailDialog } from "@/components/add-gmail-dialog";
+import { AddPhoneToProxyDialog } from "@/components/add-phone-to-proxy-dialog";
 import type { Email } from "@/lib/types";
 import { formatDate } from "@/lib/date-utils";
 import { toast } from "sonner";
@@ -82,6 +83,7 @@ export function ProxyInventoryTable({ defaultUser }: { defaultUser?: string }) {
   const [assignTarget, setAssignTarget] = useState<Proxy | null>(null);
   const [syncTarget, setSyncTarget] = useState<Proxy | null>(null);
   const [addGmailTarget, setAddGmailTarget] = useState<Proxy | null>(null);
+  const [addPhoneTarget, setAddPhoneTarget] = useState<Proxy | null>(null);
   const [detailTarget, setDetailTarget] = useState<Proxy | null>(null);
   const queryClient = useQueryClient();
 
@@ -456,6 +458,9 @@ export function ProxyInventoryTable({ defaultUser }: { defaultUser?: string }) {
                           <DropdownMenuItem onClick={() => setAssignTarget(proxy)}>
                             Assign to user
                           </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => setAddPhoneTarget(proxy)}>
+                            Add phone number
+                          </DropdownMenuItem>
                           {proxy.assignedTo && (
                             <DropdownMenuItem
                               onClick={() =>
@@ -516,6 +521,11 @@ export function ProxyInventoryTable({ defaultUser }: { defaultUser?: string }) {
       <AddGmailDialog
         proxy={addGmailTarget}
         onClose={() => setAddGmailTarget(null)}
+      />
+
+      <AddPhoneToProxyDialog
+        proxy={addPhoneTarget}
+        onClose={() => setAddPhoneTarget(null)}
       />
 
       <ProxyDetailSheet

@@ -1,9 +1,19 @@
+import { cache } from "react";
 import { cookies } from "next/headers";
 import { adminAuth, adminDb } from "@/lib/firebase-admin";
 import type { AppUser, Role } from "@/lib/types";
 
 export const SESSION_COOKIE_NAME = "session";
 const SESSION_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+/** Short in-process cache — cuts repeat users/{uid} reads on warm instances. */
+const USER_CACHE_TTL_MS = 60_000;
+const userDocCache = new Map<string, { user: AppUser; expiresAt: number }>();
+
+export function invalidateUserCache(uid?: string) {
+  if (uid) userDocCache.delete(uid);
+  else userDocCache.clear();
+}
 
 // ─── Create session cookie from ID token ─────────────────────────────────────
 
@@ -33,24 +43,15 @@ export async function getSessionCookie(): Promise<string | undefined> {
   return cookieStore.get(SESSION_COOKIE_NAME)?.value;
 }
 
-// ─── Get the currently authenticated user from the session ───────────────────
-
-export async function getCurrentUser(): Promise<AppUser | null> {
-  const sessionCookie = await getSessionCookie();
-  if (!sessionCookie) return null;
-
-  const session = await verifySession(sessionCookie);
-  if (!session) return null;
-
-  const db = adminDb();
-  const userDoc = await db.collection("users").doc(session.uid).get();
-  if (!userDoc.exists) return null;
-
-  const data = userDoc.data()!;
+function mapUserDoc(
+  uid: string,
+  sessionEmail: string,
+  data: FirebaseFirestore.DocumentData
+): AppUser {
   return {
-    uid: session.uid,
+    uid,
     name: data.name ?? "",
-    email: data.email ?? session.email,
+    email: data.email ?? sessionEmail,
     role: data.role ?? "salesman",
     country: data.country,
     poolCountries: data.poolCountries ?? undefined,
@@ -59,6 +60,41 @@ export async function getCurrentUser(): Promise<AppUser | null> {
     createdAt: data.createdAt?.toDate?.()?.toISOString() ?? new Date().toISOString(),
   };
 }
+
+async function loadUserFromFirestore(
+  uid: string,
+  sessionEmail: string
+): Promise<AppUser | null> {
+  const cached = userDocCache.get(uid);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.user;
+  }
+
+  const db = adminDb();
+  const userDoc = await db.collection("users").doc(uid).get();
+  if (!userDoc.exists) {
+    userDocCache.delete(uid);
+    return null;
+  }
+
+  const user = mapUserDoc(uid, sessionEmail, userDoc.data()!);
+  userDocCache.set(uid, { user, expiresAt: Date.now() + USER_CACHE_TTL_MS });
+  return user;
+}
+
+/**
+ * Get the currently authenticated user.
+ * Deduped per React request via cache(); also TTL-cached in process memory.
+ */
+export const getCurrentUser = cache(async (): Promise<AppUser | null> => {
+  const sessionCookie = await getSessionCookie();
+  if (!sessionCookie) return null;
+
+  const session = await verifySession(sessionCookie);
+  if (!session) return null;
+
+  return loadUserFromFirestore(session.uid, session.email);
+});
 
 // ─── Require auth — throws 401/403 via response if not met ───────────────────
 

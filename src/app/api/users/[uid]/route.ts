@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { adminDb } from "@/lib/firebase-admin";
-import { requireAuth, handleAuthError } from "@/lib/auth";
+import { requireAuth, handleAuthError, invalidateUserCache } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
 import { toIso } from "@/lib/utils-server";
 
@@ -80,6 +80,7 @@ export async function PATCH(
     }
 
     await db.collection("users").doc(uid).update(updates);
+    invalidateUserCache(uid);
 
     await writeAuditLog({
       actorUid: actor.uid,

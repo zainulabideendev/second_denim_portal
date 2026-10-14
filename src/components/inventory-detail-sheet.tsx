@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import type { Proxy, Email, PhoneNumber, AppUser, Country } from "@/lib/types";
 import { COUNTRIES, COUNTRY_LABELS } from "@/lib/types";
@@ -25,10 +25,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useAuth } from "@/contexts/auth-context";
+import { AddGmailDialog } from "@/components/add-gmail-dialog";
+import { AddPhoneToProxyDialog } from "@/components/add-phone-to-proxy-dialog";
+import { SyncEmailDialog } from "@/components/sync-dialogs";
 import { formatDate } from "@/lib/date-utils";
 import { cn } from "@/lib/utils";
 import { normalizeLane } from "@/lib/pool-utils";
-import { Eye, EyeOff, Link2, Link2Off, Pencil } from "lucide-react";
+import { Eye, EyeOff, Link2, Link2Off, Mail, Pencil, Phone } from "lucide-react";
 import { toast } from "sonner";
 
 function DetailRow({
@@ -97,6 +100,8 @@ export function ProxyDetailSheet({
 }) {
   const { appUser } = useAuth();
   const canChangeCountry = appUser?.role === "admin";
+  const canManageLinks =
+    appUser?.role === "admin" || appUser?.role === "manager";
   const [editing, setEditing] = useState(false);
   const [host, setHost] = useState("");
   const [port, setPort] = useState("");
@@ -107,13 +112,25 @@ export function ProxyDetailSheet({
   const [vintedUsername, setVintedUsername] = useState("");
   const [vintedPassword, setVintedPassword] = useState("");
   const [saved, setSaved] = useState<Partial<Proxy> | null>(null);
+  const [addGmailOpen, setAddGmailOpen] = useState(false);
+  const [syncEmailOpen, setSyncEmailOpen] = useState(false);
+  const [addPhoneOpen, setAddPhoneOpen] = useState(false);
   const queryClient = useQueryClient();
   const view = proxy ? { ...proxy, ...saved } : null;
+
+  const { data: emails } = useQuery({
+    queryKey: ["emails"],
+    queryFn: () => api.get<Email[]>("/api/emails"),
+    enabled: canManageLinks && !!proxy,
+  });
 
   useEffect(() => {
     if (!proxy) {
       setEditing(false);
       setSaved(null);
+      setAddGmailOpen(false);
+      setSyncEmailOpen(false);
+      setAddPhoneOpen(false);
       return;
     }
     setHost(proxy.host);
@@ -127,6 +144,20 @@ export function ProxyDetailSheet({
     setEditing(false);
     setSaved(null);
   }, [proxy?.id]);
+
+  async function refreshFromList() {
+    if (!proxy) return;
+    try {
+      const list = await queryClient.fetchQuery({
+        queryKey: ["proxies"],
+        queryFn: () => api.get<Proxy[]>("/api/proxies"),
+      });
+      const updated = list.find((p) => p.id === proxy.id);
+      if (updated) setSaved(updated);
+    } catch {
+      /* ignore — list invalidate still runs in dialogs */
+    }
+  }
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -157,7 +188,70 @@ export function ProxyDetailSheet({
     password.length > 0 &&
     !mutation.isPending;
 
+  const linkActions = canManageLinks && view && (
+    <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-3">
+      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+        Linked accounts
+      </p>
+      <div className="space-y-1.5 text-sm">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-xs text-muted-foreground">Email</p>
+            {view.syncedEmail ? (
+              <p className="font-mono text-xs truncate">{view.syncedEmail.email}</p>
+            ) : (
+              <p className="text-xs text-muted-foreground">Not linked</p>
+            )}
+          </div>
+        </div>
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-xs text-muted-foreground">Phone</p>
+            {view.phoneNumber ? (
+              <p className="font-mono text-xs truncate">{view.phoneNumber}</p>
+            ) : (
+              <p className="text-xs text-muted-foreground">Not linked</p>
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 text-xs"
+          onClick={() => setAddGmailOpen(true)}
+        >
+          <Mail className="h-3.5 w-3.5 mr-1.5" />
+          Add Gmail
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 text-xs"
+          onClick={() => setSyncEmailOpen(true)}
+        >
+          <Link2 className="h-3.5 w-3.5 mr-1.5" />
+          Sync from inventory
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 text-xs"
+          onClick={() => setAddPhoneOpen(true)}
+        >
+          <Phone className="h-3.5 w-3.5 mr-1.5" />
+          Add phone
+        </Button>
+      </div>
+    </div>
+  );
+
   return (
+    <>
     <Sheet open={!!proxy} onOpenChange={(open) => { if (!open) onClose(); }}>
       <SheetContent side="right" className="sm:max-w-lg">
         <SheetHeader>
@@ -227,6 +321,7 @@ export function ProxyDetailSheet({
                     placeholder="Vinted password"
                   />
                 </div>
+                {linkActions}
                 <div className="space-y-1.5">
                   <Label htmlFor="proxy-notes">Notes</Label>
                   <Textarea
@@ -332,13 +427,18 @@ export function ProxyDetailSheet({
                 <span className="text-muted-foreground">—</span>
               )}
             </DetailRow>
-            {view.phoneNumber && (
-              <DetailRow label="Phone number">
+            <DetailRow label="Phone number">
+              {view.phoneNumber ? (
                 <div className="flex items-center gap-1 font-mono text-xs">
                   <span className="break-all">{view.phoneNumber}</span>
                   <CopyButton value={view.phoneNumber} />
                 </div>
-              </DetailRow>
+              ) : (
+                <span className="text-muted-foreground">—</span>
+              )}
+            </DetailRow>
+            {canManageLinks && (
+              <div className="py-2">{linkActions}</div>
             )}
             <Separator className="my-2" />
             <DetailRow label="Purchased">
@@ -380,6 +480,50 @@ export function ProxyDetailSheet({
         )}
       </SheetContent>
     </Sheet>
+
+    {canManageLinks && (
+      <>
+        <AddGmailDialog
+          proxy={addGmailOpen ? view : null}
+          onClose={() => setAddGmailOpen(false)}
+          onSaved={async (data) => {
+            setSaved((prev) => ({
+              ...(view ?? {}),
+              ...prev,
+              syncedEmailId: data.emailId,
+              syncedEmail: {
+                id: data.emailId,
+                email: data.email,
+                password: "",
+              },
+            }));
+            await refreshFromList();
+          }}
+        />
+        <SyncEmailDialog
+          proxy={syncEmailOpen ? view : null}
+          emails={emails ?? []}
+          onClose={() => setSyncEmailOpen(false)}
+          onSaved={() => {
+            void refreshFromList();
+          }}
+        />
+        <AddPhoneToProxyDialog
+          proxy={addPhoneOpen ? view : null}
+          onClose={() => setAddPhoneOpen(false)}
+          onSaved={async (data) => {
+            setSaved((prev) => ({
+              ...(view ?? {}),
+              ...prev,
+              phoneId: data.phoneId,
+              phoneNumber: data.number,
+            }));
+            await refreshFromList();
+          }}
+        />
+      </>
+    )}
+    </>
   );
 }
 
@@ -389,46 +533,128 @@ export function EmailDetailSheet({
   email,
   user,
   onClose,
+  editable = false,
 }: {
   email: Email | null;
   user?: AppUser;
   onClose: () => void;
+  editable?: boolean;
 }) {
+  const { appUser } = useAuth();
+  const canEdit =
+    editable && (appUser?.role === "admin" || appUser?.role === "manager");
+  const [editing, setEditing] = useState(false);
+  const [emailValue, setEmailValue] = useState("");
+  const [passwordValue, setPasswordValue] = useState("");
+  const [notesValue, setNotesValue] = useState("");
+  const [saved, setSaved] = useState<Partial<Email> | null>(null);
+  const queryClient = useQueryClient();
+  const view = email ? { ...email, ...saved } : null;
+
+  useEffect(() => {
+    if (!email) {
+      setEditing(false);
+      setSaved(null);
+      return;
+    }
+    setEmailValue(email.email);
+    setPasswordValue(email.password);
+    setNotesValue(email.notes ?? "");
+    setEditing(false);
+    setSaved(null);
+  }, [email?.id]);
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      api.patch<Email>(`/api/emails/${email!.id}`, {
+        email: emailValue.trim().toLowerCase(),
+        password: passwordValue,
+        notes: notesValue,
+      }),
+    onSuccess: (data) => {
+      toast.success("Email details saved");
+      setSaved(data);
+      queryClient.invalidateQueries({ queryKey: ["emails"] });
+      queryClient.invalidateQueries({ queryKey: ["proxies"] });
+      setEditing(false);
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const canSave =
+    emailValue.trim().length > 0 &&
+    passwordValue.length > 0 &&
+    !mutation.isPending;
+
   return (
     <Sheet open={!!email} onOpenChange={(open) => { if (!open) onClose(); }}>
       <SheetContent side="right" className="sm:max-w-lg">
         <SheetHeader>
           <SheetTitle>Email details</SheetTitle>
           <SheetDescription className="font-mono break-all">
-            {email?.email}
+            {view?.email}
           </SheetDescription>
         </SheetHeader>
-        {email && (
+        {view && (
           <SheetBody className="space-y-1">
+            {editing ? (
+              <div className="space-y-3 py-1">
+                <div className="space-y-1.5">
+                  <Label htmlFor="email-address">Email</Label>
+                  <Input
+                    id="email-address"
+                    type="email"
+                    value={emailValue}
+                    onChange={(e) => setEmailValue(e.target.value)}
+                    autoComplete="off"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="email-password">Password</Label>
+                  <Input
+                    id="email-password"
+                    type="text"
+                    value={passwordValue}
+                    onChange={(e) => setPasswordValue(e.target.value)}
+                    autoComplete="off"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="email-notes">Notes</Label>
+                  <Textarea
+                    id="email-notes"
+                    value={notesValue}
+                    onChange={(e) => setNotesValue(e.target.value)}
+                    rows={3}
+                  />
+                </div>
+              </div>
+            ) : (
+              <>
             <DetailRow label="Email">
               <div className="flex items-center gap-1 font-mono text-xs">
-                <span className="break-all">{email.email}</span>
-                <CopyButton value={email.email} />
+                <span className="break-all">{view.email}</span>
+                <CopyButton value={view.email} />
               </div>
             </DetailRow>
             <DetailRow label="Password">
-              <SecretValue value={email.password} />
+              <SecretValue value={view.password} />
             </DetailRow>
             <Separator className="my-2" />
             <DetailRow label="Status">
-              <StatusBadge status={email.status} />
+              <StatusBadge status={view.status} />
             </DetailRow>
             <DetailRow label="Assigned to">
               <AssignedUserBlock user={user} />
             </DetailRow>
             <DetailRow label="Proxy sync">
-              {email.syncedProxy ? (
+              {view.syncedProxy ? (
                 <div className="space-y-1">
                   <span className="inline-flex items-center gap-1 text-xs text-emerald-700">
                     <Link2 className="h-3 w-3" /> Synced
                   </span>
                   <p className="font-mono text-xs">
-                    {email.syncedProxy.host}:{email.syncedProxy.port}
+                    {view.syncedProxy.host}:{view.syncedProxy.port}
                   </p>
                 </div>
               ) : (
@@ -437,18 +663,43 @@ export function EmailDetailSheet({
                 </span>
               )}
             </DetailRow>
-            {email.notes && (
+            {view.notes && (
               <DetailRow label="Notes">
-                <span className="text-xs">{email.notes}</span>
+                <span className="text-xs">{view.notes}</span>
               </DetailRow>
             )}
             <DetailRow label="Created">
-              <span>{formatDate(email.createdAt)}</span>
+              <span>{formatDate(view.createdAt)}</span>
             </DetailRow>
             <DetailRow label="ID">
-              <span className="font-mono text-[10px] text-muted-foreground break-all">{email.id}</span>
+              <span className="font-mono text-[10px] text-muted-foreground break-all">{view.id}</span>
             </DetailRow>
+              </>
+            )}
           </SheetBody>
+        )}
+        {email && canEdit && (
+          <SheetFooter>
+            {editing ? (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => setEditing(false)}
+                  disabled={mutation.isPending}
+                >
+                  Cancel
+                </Button>
+                <Button disabled={!canSave} onClick={() => mutation.mutate()}>
+                  {mutation.isPending ? "Saving…" : "Save"}
+                </Button>
+              </>
+            ) : (
+              <Button variant="outline" onClick={() => setEditing(true)}>
+                <Pencil className="h-3.5 w-3.5 mr-1.5" />
+                Edit email &amp; password
+              </Button>
+            )}
+          </SheetFooter>
         )}
       </SheetContent>
     </Sheet>

@@ -158,7 +158,8 @@ export function AdminDashboard({ user }: { user: AppUser }) {
   const { data, isLoading } = useQuery({
     queryKey: ["users-summary"],
     queryFn: () => api.get<SummaryData>("/api/dashboard/users-summary"),
-    refetchInterval: 30_000,
+    // Heavy scan (users + proxies + phones) — no auto-poll; refresh on navigate/invalidate
+    staleTime: 2 * 60_000,
   });
 
   const { register, handleSubmit, reset, setValue, formState: { errors } } = useForm<CreateUserForm>({

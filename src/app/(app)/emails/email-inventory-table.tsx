@@ -348,7 +348,7 @@ export function EmailInventoryTable() {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem onClick={() => setDetailTarget(email)}>
-                            View details
+                            View / edit details
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem onClick={() => { setAssignTarget(email); setAssignUserId(""); }}>
@@ -431,7 +431,11 @@ export function EmailInventoryTable() {
       <EmailDetailSheet
         email={detailTarget}
         user={detailTarget ? userMap.get(detailTarget.assignedTo ?? "") : undefined}
-        onClose={() => setDetailTarget(null)}
+        editable
+        onClose={() => {
+          setDetailTarget(null);
+          queryClient.invalidateQueries({ queryKey: ["emails"] });
+        }}
       />
     </div>
   );

@@ -1,18 +1,23 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import { toIso } from "@/lib/utils-server";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const actor = await requireAuth();
     const db = adminDb();
+    const { searchParams } = new URL(request.url);
+    const limitRaw = Number(searchParams.get("limit") ?? "20");
+    const limit = Number.isFinite(limitRaw)
+      ? Math.min(Math.max(Math.floor(limitRaw), 1), 50)
+      : 20;
 
     const snapshot = await db
       .collection("notifications")
       .where("uid", "==", actor.uid)
       .orderBy("createdAt", "desc")
-      .limit(50)
+      .limit(limit)
       .get();
 
     const notifications = snapshot.docs.map((doc) => {
