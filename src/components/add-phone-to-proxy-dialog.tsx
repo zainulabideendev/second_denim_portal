@@ -62,7 +62,7 @@ export function AddPhoneToProxyDialog({ proxy, onClose, onSaved }: AddPhoneToPro
 
   const mutation = useMutation({
     mutationFn: () =>
-      api.post<{ phoneId: string; number: string }>(`/api/proxies/${proxy!.id}/add-phone`, {
+      api.post<{ phoneId: string; proxyId: string; number: string }>(`/api/proxies/${proxy!.id}/add-phone`, {
         number: number.trim(),
         provider: provider.trim() || "manual",
         country,
