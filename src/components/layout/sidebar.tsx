@@ -16,6 +16,7 @@ import {
   Bell,
   Mail,
   Layers,
+  BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
@@ -39,8 +40,9 @@ export function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
-  const { appUser } = useAuth();
-  const role = appUser?.role ?? "salesman";
+  const { appUser, setAppUser } = useAuth();
+  // Don't default to salesman — that flashes salesman nav for admins right after login
+  const role = appUser?.role;
 
   const { data: notifications } = useQuery({
     queryKey: ["notifications"],
@@ -106,6 +108,12 @@ export function Sidebar() {
       roles: ["admin"],
     },
     {
+      href: "/proxy-status",
+      label: "Proxy Status",
+      icon: BarChart3,
+      roles: ["admin", "manager"],
+    },
+    {
       href: "/users",
       label: "Users",
       icon: Users,
@@ -119,9 +127,11 @@ export function Sidebar() {
     },
   ];
 
-  const visibleItems = navItems.filter((item) =>
-    item.roles.includes(role as "admin" | "manager" | "salesman")
-  );
+  const visibleItems = role
+    ? navItems.filter((item) =>
+        item.roles.includes(role as "admin" | "manager" | "salesman")
+      )
+    : [];
 
   const isSalesman = role === "salesman";
 
@@ -129,7 +139,9 @@ export function Sidebar() {
     try {
       await getClientAuth().signOut();
       await api.post("/api/auth/logout", {});
+      setAppUser(null);
       router.push("/login");
+      router.refresh();
     } catch {
       toast.error("Failed to sign out");
     }

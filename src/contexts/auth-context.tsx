@@ -30,6 +30,12 @@ export function AuthProvider({
   const [appUser, setAppUser] = useState<AppUser | null>(initialUser);
   const [loading, setLoading] = useState(true);
 
+  // Keep client auth in sync when the server passes a new initialUser (e.g. after login refresh).
+  // Don't clear a freshly set login user if a transient null initialUser arrives mid-refresh.
+  useEffect(() => {
+    if (initialUser) setAppUser(initialUser);
+  }, [initialUser]);
+
   useEffect(() => {
     if (!isFirebaseClientConfigured()) {
       setLoading(false);

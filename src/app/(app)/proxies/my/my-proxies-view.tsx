@@ -229,6 +229,15 @@ export function MyProxiesView({ user }: { user: AppUser }) {
     onError: (err) => toast.error(err.message),
   });
 
+  const unbanMutation = useMutation({
+    mutationFn: (id: string) => api.post(`/api/proxies/${id}/unban`, {}),
+    onSuccess: () => {
+      toast.success("Account restored to active");
+      queryClient.invalidateQueries({ queryKey: ["my-proxies"] });
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
   const renderBackupActions = (proxy: Proxy) => {
     if (!countryPool) return null;
     const created = proxy.accountsCreated ?? proxy.stagingDone;
@@ -503,7 +512,23 @@ export function MyProxiesView({ user }: { user: AppUser }) {
                       key={proxy.id}
                       proxy={proxy}
                       onDetails={() => setDetailProxy(proxy)}
-                    />
+                    >
+                      <Button
+                        size="sm"
+                        className="w-full"
+                        onClick={() => unbanMutation.mutate(proxy.id)}
+                        disabled={
+                          unbanMutation.isPending ||
+                          !countryPool ||
+                          countryPool.activeWorkingCount >= countryPool.activeLimit
+                        }
+                      >
+                        <ArrowUpCircle className="h-3.5 w-3.5 mr-1.5" />
+                        {unbanMutation.isPending
+                          ? "Restoring…"
+                          : "Restore to active"}
+                      </Button>
+                    </ProxyRow>
                   ))
                 )}
               </div>

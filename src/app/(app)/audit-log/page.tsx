@@ -17,6 +17,7 @@ const actionColors: Record<string, string> = {
   "proxy.assigned": "bg-blue-50 text-blue-700",
   "proxy.revoked": "bg-amber-50 text-amber-700",
   "proxy.flagged": "bg-orange-50 text-orange-700",
+  "proxy.unbanned": "bg-emerald-50 text-emerald-700",
   "proxy.expired": "bg-zinc-100 text-zinc-600",
   "proxy.retired": "bg-zinc-100 text-zinc-600",
   "proxy.imported": "bg-emerald-50 text-emerald-700",

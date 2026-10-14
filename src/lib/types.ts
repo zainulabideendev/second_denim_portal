@@ -237,6 +237,7 @@ export type AuditAction =
   | "proxy.assigned"
   | "proxy.revoked"
   | "proxy.flagged"
+  | "proxy.unbanned"
   | "proxy.expired"
   | "proxy.retired"
   | "proxy.imported"

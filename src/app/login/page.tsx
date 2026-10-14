@@ -8,6 +8,8 @@ import { z } from "zod";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { getClientAuth, isFirebaseClientConfigured } from "@/lib/firebase-client";
 import { api } from "@/lib/api-client";
+import { useAuth } from "@/contexts/auth-context";
+import type { AppUser, Role } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,6 +28,7 @@ function LoginForm() {
   const searchParams = useSearchParams();
   const next = searchParams.get("next") ?? "/dashboard";
   const [loading, setLoading] = useState(false);
+  const { setAppUser } = useAuth();
 
   const {
     register,
@@ -49,7 +52,23 @@ function LoginForm() {
         values.password
       );
       const idToken = await userCred.user.getIdToken();
-      await api.post("/api/auth/login", { idToken });
+      const session = await api.post<{
+        uid: string;
+        role: Role;
+        name: string;
+      }>("/api/auth/login", { idToken });
+
+      // Set role immediately so sidebar/shell don't flash salesman UI
+      setAppUser({
+        uid: session.uid,
+        name: session.name,
+        email: values.email,
+        role: session.role,
+        activeProxyLimit: 4,
+        status: "active",
+        createdAt: new Date().toISOString(),
+      } satisfies AppUser);
+
       router.push(next);
       router.refresh();
     } catch (err) {
