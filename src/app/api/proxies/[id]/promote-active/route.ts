@@ -5,7 +5,6 @@ import { writeAuditLog } from "@/lib/audit";
 import {
   getUserPoolAssignments,
   getAssignmentSizePerLane,
-  getAssignmentBackupLimit,
 } from "@/lib/user-pools";
 import {
   canPromoteToActive,
@@ -13,7 +12,6 @@ import {
   getActivePoolCounts,
   normalizeLane,
 } from "@/lib/pool-utils";
-import { autoRefillUserPoolForCountry } from "@/lib/utils-server";
 import type { Country } from "@/lib/types";
 
 export async function POST(
@@ -112,17 +110,9 @@ export async function POST(
       metadata: { from: "backup", to: "active", uid: ownerUid, country },
     });
 
-    const refilled = await autoRefillUserPoolForCountry(
-      ownerUid,
-      country,
-      actor.uid,
-      activePoolSize,
-      getAssignmentBackupLimit(assignments, country)
-    );
-
     return NextResponse.json({
       success: true,
-      data: { id, lane: "active", refilled },
+      data: { id, lane: "active", refilled: 0 },
     });
   } catch (err) {
     return handleAuthError(err);

@@ -8,7 +8,6 @@ import {
   enrichPoolRows,
   getAllUserPoolAssignments,
 } from "@/lib/user-pools";
-// import { autoRefillUserPoolForCountry } from "@/lib/utils-server";
 
 export async function GET() {
   try {
@@ -89,21 +88,7 @@ export async function POST(request: NextRequest) {
       usersById,
     });
 
-    // Auto-assign proxies into the new pool is disabled for now —
-    // pool create only stores user + country + active/backup limits.
-    // const filled = 0;
-    // for (const { country, sizePerLane, backupLimit } of countrySizes) {
-    //   for (const userId of uniqueUserIds) {
-    //     filled += await autoRefillUserPoolForCountry(
-    //       userId,
-    //       country,
-    //       actor.uid,
-    //       sizePerLane,
-    //       backupLimit
-    //     );
-    //   }
-    // }
-    const filled = 0;
+    // Proxies are never auto-assigned — admin assigns manually after pool create.
 
     await writeAuditLog({
       actorUid: actor.uid,
@@ -114,12 +99,12 @@ export async function POST(request: NextRequest) {
         userIds: uniqueUserIds,
         countrySizes,
         created: result.created,
-        filled,
+        filled: 0,
       },
     });
 
     return NextResponse.json(
-      { success: true, data: { ...result, filled } },
+      { success: true, data: { ...result, filled: 0 } },
       { status: 201 }
     );
   } catch (err) {

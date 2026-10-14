@@ -3,7 +3,7 @@ import { requireAuth, handleAuthError } from "@/lib/auth";
 import { syncProxyCheapFromApi } from "@/lib/proxy-cheap-sync";
 
 /**
- * Admin/manager: fetch proxies from Proxy-Cheap (UK/BE/FR) and insert new ones.
+ * Admin/manager: fetch proxies from Proxy-Cheap (UK/BE/FR/DE) and insert new ones.
  * Matching is by proxyCheapId — existing docs are never updated.
  */
 export async function POST() {

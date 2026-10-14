@@ -169,7 +169,7 @@ export interface SyncProxyCheapOptions {
 }
 
 /**
- * Fetch from UK/BE/FR accounts.
+ * Fetch from UK/BE/FR/DE accounts.
  * Match on proxyCheapId:
  *   - new → insert;
  *   - existing + same expiresAt → skip;

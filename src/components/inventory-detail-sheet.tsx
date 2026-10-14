@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import type { Proxy, Email, PhoneNumber, AppUser, Country } from "@/lib/types";
-import { COUNTRY_LABELS } from "@/lib/types";
+import { COUNTRIES, COUNTRY_LABELS } from "@/lib/types";
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetBody, SheetFooter,
 } from "@/components/ui/sheet";
@@ -17,6 +17,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useAuth } from "@/contexts/auth-context";
 import { formatDate } from "@/lib/date-utils";
 import { cn } from "@/lib/utils";
 import { normalizeLane } from "@/lib/pool-utils";
@@ -87,11 +95,14 @@ export function ProxyDetailSheet({
   onClose: () => void;
   editable?: boolean;
 }) {
+  const { appUser } = useAuth();
+  const canChangeCountry = appUser?.role === "admin";
   const [editing, setEditing] = useState(false);
   const [host, setHost] = useState("");
   const [port, setPort] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [country, setCountry] = useState<Country>("UK");
   const [notes, setNotes] = useState("");
   const [vintedUsername, setVintedUsername] = useState("");
   const [vintedPassword, setVintedPassword] = useState("");
@@ -109,6 +120,7 @@ export function ProxyDetailSheet({
     setPort(proxy.port);
     setUsername(proxy.username);
     setPassword(proxy.password);
+    setCountry(proxy.country as Country);
     setNotes(proxy.notes ?? "");
     setVintedUsername(proxy.vintedUsername ?? "");
     setVintedPassword(proxy.vintedPassword ?? "");
@@ -126,6 +138,7 @@ export function ProxyDetailSheet({
         notes,
         vintedUsername: vintedUsername.trim(),
         vintedPassword,
+        ...(canChangeCountry ? { country } : {}),
       }),
     onSuccess: (data) => {
       toast.success("Proxy details saved");
@@ -157,6 +170,26 @@ export function ProxyDetailSheet({
           <SheetBody className="space-y-1">
             {editing ? (
               <div className="space-y-3 py-1">
+                {canChangeCountry && (
+                  <div className="space-y-1.5">
+                    <Label>Country</Label>
+                    <Select
+                      value={country}
+                      onValueChange={(v) => setCountry((v ?? country) as Country)}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue>{COUNTRY_LABELS[country]}</SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {COUNTRIES.map((c) => (
+                          <SelectItem key={c} value={c}>
+                            {COUNTRY_LABELS[c]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label htmlFor="proxy-host">Host</Label>

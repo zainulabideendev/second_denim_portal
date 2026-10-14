@@ -57,10 +57,13 @@ PROXY_CHEAP_BE_API_KEY=...
 PROXY_CHEAP_BE_API_SECRET=...
 PROXY_CHEAP_FR_API_KEY=...
 PROXY_CHEAP_FR_API_SECRET=...
+PROXY_CHEAP_DE_API_KEY=...
+PROXY_CHEAP_DE_API_SECRET=...
 # Optional per-account order IDs:
 # PROXY_CHEAP_UK_ORDER_IDS=123,456
 # PROXY_CHEAP_BE_ORDER_IDS=...
 # PROXY_CHEAP_FR_ORDER_IDS=...
+# PROXY_CHEAP_DE_ORDER_IDS=...
 ```
 
 ### 3. Firestore Security Rules
@@ -136,14 +139,15 @@ The `/api/cron/expire-items` route runs daily (configured in `vercel.json` for V
 
 ### Proxy-Cheap sync
 
-The `/api/cron/sync-proxy-cheap` route runs once daily at **9:30 PM Pakistan time** (`30 16 * * *` UTC). It fetches ACTIVE proxies from **three** Proxy-Cheap accounts (UK / BE / FR), forces `country` from the account used, and stores `host`, `port`, `username`, `password`, `status` (`fresh`), `country`, and `proxyCheapId`.
+The `/api/cron/sync-proxy-cheap` route runs once daily at **9:30 PM Pakistan time** (`30 16 * * *` UTC). It fetches ACTIVE proxies from Proxy-Cheap accounts (UK / BE / FR / DE), forces `country` from the account used, and stores `host`, `port`, `username`, `password`, `status` (`fresh`), `country`, and `proxyCheapId`.
 
 Matching is by **`proxyCheapId`** (the Proxy-Cheap proxy id) only: if that id already exists → skip (existing docs are never updated); if new → insert.
 
 Requires at least one account key pair:
 `PROXY_CHEAP_UK_API_KEY` + `PROXY_CHEAP_UK_API_SECRET`,
 `PROXY_CHEAP_BE_API_KEY` + `PROXY_CHEAP_BE_API_SECRET`,
-and/or `PROXY_CHEAP_FR_API_KEY` + `PROXY_CHEAP_FR_API_SECRET`.
+`PROXY_CHEAP_FR_API_KEY` + `PROXY_CHEAP_FR_API_SECRET`,
+and/or `PROXY_CHEAP_DE_API_KEY` + `PROXY_CHEAP_DE_API_SECRET`.
 
 Dry-run (no DB write): `GET /api/cron/sync-proxy-cheap?dryRun=true` with `x-cron-secret`.
 

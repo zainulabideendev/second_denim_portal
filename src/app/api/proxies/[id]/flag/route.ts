@@ -4,11 +4,6 @@ import { adminDb } from "@/lib/firebase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
 import { handleBanCascade, notifyManagers } from "@/lib/utils-server";
-import {
-  getUserPoolAssignments,
-  getAssignmentSizePerLane,
-  getAssignmentBackupLimit,
-} from "@/lib/user-pools";
 import type { Country } from "@/lib/types";
 
 const flagSchema = z.object({
@@ -61,25 +56,8 @@ export async function POST(
     const ownerUid = proxyData.assignedTo as string | null;
     const country = proxyData.country as Country;
 
-    let activePoolSize = 3;
-    let backupLimit: number | null = null;
-    if (ownerUid) {
-      const assignments = await getUserPoolAssignments(ownerUid);
-      activePoolSize =
-        getAssignmentSizePerLane(assignments, country) ?? activePoolSize;
-      backupLimit = getAssignmentBackupLimit(assignments, country);
-    }
-
     const cascadeResult = ownerUid
-      ? await handleBanCascade(
-          id,
-          ownerUid,
-          country,
-          actor.uid,
-          notes,
-          activePoolSize,
-          backupLimit
-        )
+      ? await handleBanCascade(id, ownerUid, country, actor.uid, notes)
       : { promoted: [], refilled: false };
 
     // If the proxy wasn't assigned (admin flagging a global proxy), just flag it
@@ -100,13 +78,13 @@ export async function POST(
         previousStatus: proxyData.status,
         previousLane: proxyData.lane,
         promoted: cascadeResult.promoted,
-        refilled: cascadeResult.refilled,
+        refilled: false,
       },
     });
 
     await notifyManagers({
       type: "proxy_flagged",
-      message: `${actor.name} reported a ban on a ${country} proxy. Backup refill: ${cascadeResult.refilled ? "new proxy added" : "pool exhausted!"}`,
+      message: `${actor.name} reported a ban on a ${country} proxy. Assign a replacement manually if needed.`,
       relatedId: id,
     });
 

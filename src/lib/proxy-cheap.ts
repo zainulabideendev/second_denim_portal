@@ -9,6 +9,7 @@ export const PROXY_CHEAP_ACCOUNTS = [
   { id: "UK", country: "UK" as Country, keyEnv: "PROXY_CHEAP_UK_API_KEY", secretEnv: "PROXY_CHEAP_UK_API_SECRET" },
   { id: "BE", country: "BE" as Country, keyEnv: "PROXY_CHEAP_BE_API_KEY", secretEnv: "PROXY_CHEAP_BE_API_SECRET" },
   { id: "FR", country: "FR" as Country, keyEnv: "PROXY_CHEAP_FR_API_KEY", secretEnv: "PROXY_CHEAP_FR_API_SECRET" },
+  { id: "DE", country: "DE" as Country, keyEnv: "PROXY_CHEAP_DE_API_KEY", secretEnv: "PROXY_CHEAP_DE_API_SECRET" },
 ] as const;
 
 export type ProxyCheapAccountId = (typeof PROXY_CHEAP_ACCOUNTS)[number]["id"];
@@ -77,7 +78,7 @@ export interface AccountFetchStats {
   country: Country;
   fetched: number;
   skippedOther: number;
-  /** Proxies whose API countryCode did not match this account (UK/BE/FR). */
+  /** Proxies whose API countryCode did not match this account (UK/BE/FR/DE). */
   skippedWrongCountry: number;
   error?: string;
 }
@@ -129,7 +130,7 @@ function extractApiCountryCode(raw: ProxyCheapRawProxy): string | undefined {
   );
 }
 
-/** Load configured UK / BE / FR accounts from env (skips incomplete pairs). */
+/** Load configured UK / BE / FR / DE accounts from env (skips incomplete pairs). */
 export function getConfiguredProxyCheapAccounts(): ProxyCheapAccountConfig[] {
   const accounts: ProxyCheapAccountConfig[] = [];
 
@@ -178,8 +179,8 @@ type MapOutcome =
 
 /**
  * Map a raw proxy for one country account.
- * - Country saved = account country (UK / BE / FR only)
- * - If API reports a different countryCode, skip (wrong account)
+ * - Country saved = account country (UK / BE / FR / DE)
+ * - API country may differ (e.g. BE proxies on DE account); still import, note apiCountry
  * - Requires Proxy-Cheap proxy id for cron dedupe
  */
 export function mapProxyCheapProxy(
@@ -195,11 +196,8 @@ export function mapProxyCheapProxy(
     return { ok: false, reason: "incomplete" };
   }
 
-  // If API includes country, it must match this account (UK account → UK only, etc.)
-  const apiCountry = normalizeProxyCheapCountryCode(extractApiCountryCode(raw));
-  if (apiCountry && apiCountry !== account.country) {
-    return { ok: false, reason: "wrong_country" };
-  }
+  const apiCountryRaw = extractApiCountryCode(raw);
+  const apiCountry = normalizeProxyCheapCountryCode(apiCountryRaw);
 
   const host = (
     raw.connection?.connectIp ||
@@ -230,6 +228,9 @@ export function mapProxyCheapProxy(
     `account=${account.id}`,
     raw.networkType || raw.type ? `type=${raw.networkType || raw.type}` : null,
     raw.metadata?.ispName ? `isp=${raw.metadata.ispName}` : null,
+    apiCountryRaw && apiCountry !== account.country
+      ? `apiCountry=${String(apiCountryRaw).trim().toUpperCase()}`
+      : null,
   ].filter(Boolean);
 
   return {
@@ -241,7 +242,7 @@ export function mapProxyCheapProxy(
       username,
       password,
       status: "fresh",
-      // Always the account country — UK account → UK, BE → BE, FR → FR
+      // Always the account country — UK → UK, BE → BE, FR → FR, DE → DE
       country: account.country,
       provider: PROXY_CHEAP_PROVIDER,
       purchasedAt,
@@ -296,7 +297,7 @@ async function fetchAccountProxies(
 
 /**
  * Fetch per country account:
- * UK keys → only UK proxies, BE keys → only BE, FR keys → only FR.
+ * UK → UK only, BE → BE, FR → FR, DE → DE.
  */
 export async function fetchProxyCheapProxies(): Promise<FetchProxyCheapResult> {
   const accounts = getConfiguredProxyCheapAccounts();
@@ -304,7 +305,8 @@ export async function fetchProxyCheapProxies(): Promise<FetchProxyCheapResult> {
   if (accounts.length === 0) {
     throw new Error(
       "Proxy-Cheap is not configured. Set at least one account pair: " +
-        "PROXY_CHEAP_UK_API_KEY/SECRET, PROXY_CHEAP_BE_API_KEY/SECRET, or PROXY_CHEAP_FR_API_KEY/SECRET."
+        "PROXY_CHEAP_UK_API_KEY/SECRET, PROXY_CHEAP_BE_API_KEY/SECRET, " +
+        "PROXY_CHEAP_FR_API_KEY/SECRET, or PROXY_CHEAP_DE_API_KEY/SECRET."
     );
   }
 

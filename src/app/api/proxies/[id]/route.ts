@@ -13,6 +13,7 @@ const updateSchema = z.object({
   notes: z.string().optional(),
   vintedUsername: z.string().optional(),
   vintedPassword: z.string().optional(),
+  country: z.enum(["FR", "BE", "UK", "DE"]).optional(),
 });
 
 export async function PATCH(
@@ -28,6 +29,13 @@ export async function PATCH(
       return NextResponse.json(
         { success: false, error: parsed.error.issues[0]?.message ?? "Invalid data" },
         { status: 400 }
+      );
+    }
+
+    if (parsed.data.country !== undefined && actor.role !== "admin") {
+      return NextResponse.json(
+        { success: false, error: "Only admins can change proxy country" },
+        { status: 403 }
       );
     }
 
@@ -55,12 +63,18 @@ export async function PATCH(
 
     await proxyRef.update(updates);
 
+    const metadata: Record<string, unknown> = { fields: Object.keys(updates) };
+    if (updates.country && updates.country !== data.country) {
+      metadata.previousCountry = data.country;
+      metadata.country = updates.country;
+    }
+
     await writeAuditLog({
       actorUid: actor.uid,
       action: "proxy.updated",
       targetType: "proxy",
       targetId: id,
-      metadata: { fields: Object.keys(updates) },
+      metadata,
     });
 
     const next = await proxyRef.get();

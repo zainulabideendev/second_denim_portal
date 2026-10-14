@@ -140,7 +140,7 @@ function EmptySlot() {
       </div>
       <div>
         <p className="text-sm font-medium text-foreground">Empty slot</p>
-        <p className="text-xs text-muted-foreground">Waiting for a proxy from the pool</p>
+        <p className="text-xs text-muted-foreground">Admin will assign a proxy here</p>
       </div>
     </div>
   );
@@ -220,13 +220,8 @@ export function MyProxiesView({ user }: { user: AppUser }) {
   const banMutation = useMutation({
     mutationFn: ({ id, notes }: { id: string; notes: string }) =>
       api.post(`/api/proxies/${id}/flag`, { notes }),
-    onSuccess: (res) => {
-      const r = res as { cascade: { refilled: boolean } };
-      toast.success(
-        r?.cascade?.refilled
-          ? "Ban reported — new backup added"
-          : "Ban reported — pool is low on stock"
-      );
+    onSuccess: () => {
+      toast.success("Ban reported — admin will assign a replacement if needed");
       queryClient.invalidateQueries({ queryKey: ["my-proxies"] });
       setBanTarget(null);
       setBanNotes("");
@@ -529,7 +524,7 @@ export function MyProxiesView({ user }: { user: AppUser }) {
           </DialogHeader>
           <div className="space-y-3 py-2">
             <p className="text-sm text-muted-foreground">
-              This marks the account as banned and pulls a new backup from the pool if available.
+              This marks the account as banned. An admin will assign a replacement proxy manually if needed.
             </p>
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">

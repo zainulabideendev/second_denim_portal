@@ -3,7 +3,6 @@ import { adminDb } from "@/lib/firebase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
 import {
-  assignAvailableProxy,
   assignAvailablePhone,
   createNotification,
   toIso,
@@ -34,18 +33,17 @@ export async function POST(
     const { country, requestedBy, type } = reqData;
     const now = new Date();
 
-    // Try to find an available item
+    // Proxies are never auto-assigned — admin assigns manually after approval.
+    // Phones still auto-assign on approve if stock exists.
     let fulfilledItemId: string | null = null;
 
-    if (type === "proxy") {
-      const proxy = await assignAvailableProxy(country, requestedBy, actor.uid);
-      fulfilledItemId = proxy?.id ?? null;
-    } else {
+    if (type === "phone") {
       const phone = await assignAvailablePhone(country, requestedBy, actor.uid);
       fulfilledItemId = phone?.id ?? null;
     }
 
-    const newStatus = fulfilledItemId ? "fulfilled" : "approved";
+    const newStatus =
+      type === "proxy" ? "approved" : fulfilledItemId ? "fulfilled" : "approved";
 
     await reqDoc.ref.update({
       status: newStatus,
@@ -62,12 +60,17 @@ export async function POST(
       metadata: { fulfilledItemId, type, country, newStatus },
     });
 
+    const message =
+      type === "proxy"
+        ? `Your proxy request for ${country} was approved. An admin will assign a proxy manually.`
+        : fulfilledItemId
+          ? `Your phone request for ${country} has been approved and assigned!`
+          : `Your phone request for ${country} has been approved, but no stock is available yet.`;
+
     await createNotification({
       uid: requestedBy,
       type: "request_reviewed",
-      message: fulfilledItemId
-        ? `Your ${type} request for ${country} has been approved and assigned!`
-        : `Your ${type} request for ${country} has been approved, but no stock is available yet.`,
+      message,
       relatedId: id,
     });
 

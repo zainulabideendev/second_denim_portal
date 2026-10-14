@@ -8,7 +8,6 @@ import {
   getPoolConfig,
   resolveUserPoolCountries,
 } from "@/lib/pool-config";
-import { autoRefillUserPools } from "@/lib/utils-server";
 import { MAX_POOL_COUNTRIES } from "@/lib/types";
 
 const bodySchema = z.object({
@@ -16,7 +15,6 @@ const bodySchema = z.object({
     .array(z.enum(["FR", "BE", "UK", "DE"]))
     .min(1)
     .max(MAX_POOL_COUNTRIES),
-  refill: z.boolean().optional().default(true),
 });
 
 export async function GET(
@@ -92,11 +90,6 @@ export async function PATCH(
       activeProxyLimit,
     });
 
-    let filled = 0;
-    if (parsed.data.refill) {
-      filled = await autoRefillUserPools(uid, actor.uid);
-    }
-
     await writeAuditLog({
       actorUid: actor.uid,
       action: "pool.user_countries_updated",
@@ -105,7 +98,6 @@ export async function PATCH(
       metadata: {
         poolCountries: uniqueCountries,
         activeProxyLimit,
-        filled,
       },
     });
 
@@ -115,7 +107,7 @@ export async function PATCH(
         uid,
         poolCountries: uniqueCountries,
         activeProxyLimit,
-        filled,
+        filled: 0,
       },
     });
   } catch (err) {
