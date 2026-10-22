@@ -71,16 +71,33 @@ export async function enrichProxiesWithSyncedEmails<T extends ProxyWithOptionalS
   }));
 }
 
+type SyncedProxySnap = {
+  id: string;
+  host: string;
+  port: string;
+  country: string;
+};
+
 export async function enrichEmailsWithSyncedProxies<
-  T extends { id: string; syncedProxyId?: string | null }
+  T extends {
+    id: string;
+    syncedProxyId?: string | null;
+    syncedProxy?: SyncedProxySnap | null;
+  }
 >(emails: T[]) {
+  const needFetch = emails.filter(
+    (e) => e.syncedProxyId && !e.syncedProxy?.host
+  );
   const proxyIds = [
     ...new Set(
-      emails.map((e) => e.syncedProxyId).filter((id): id is string => !!id)
+      needFetch.map((e) => e.syncedProxyId).filter((id): id is string => !!id)
     ),
   ];
   if (!proxyIds.length) {
-    return emails.map((e) => ({ ...e, syncedProxy: null }));
+    return emails.map((e) => ({
+      ...e,
+      syncedProxy: e.syncedProxyId ? e.syncedProxy ?? null : null,
+    }));
   }
 
   const db = adminDb();
@@ -104,22 +121,47 @@ export async function enrichEmailsWithSyncedProxies<
       })
   );
 
+  const backfills = needFetch
+    .map((e) => {
+      const snap = e.syncedProxyId ? proxyMap.get(e.syncedProxyId) : null;
+      if (!snap) return null;
+      return db.collection("emails").doc(e.id).update({
+        syncedProxyHost: snap.host,
+        syncedProxyPort: snap.port,
+        syncedProxyCountry: snap.country,
+      });
+    })
+    .filter(Boolean);
+  if (backfills.length) {
+    void Promise.all(backfills).catch(() => undefined);
+  }
+
   return emails.map((e) => ({
     ...e,
-    syncedProxy: e.syncedProxyId ? proxyMap.get(e.syncedProxyId) ?? null : null,
+    syncedProxy: e.syncedProxyId
+      ? e.syncedProxy ?? proxyMap.get(e.syncedProxyId) ?? null
+      : null,
   }));
 }
 
 export async function enrichPhonesWithProxies<
-  T extends { id: string; proxyId?: string | null }
+  T extends {
+    id: string;
+    proxyId?: string | null;
+    proxy?: SyncedProxySnap | null;
+  }
 >(phones: T[]) {
+  const needFetch = phones.filter((p) => p.proxyId && !p.proxy?.host);
   const proxyIds = [
     ...new Set(
-      phones.map((p) => p.proxyId).filter((id): id is string => !!id)
+      needFetch.map((p) => p.proxyId).filter((id): id is string => !!id)
     ),
   ];
   if (!proxyIds.length) {
-    return phones.map((p) => ({ ...p, proxy: null }));
+    return phones.map((p) => ({
+      ...p,
+      proxy: p.proxyId ? p.proxy ?? null : null,
+    }));
   }
 
   const db = adminDb();
@@ -143,10 +185,55 @@ export async function enrichPhonesWithProxies<
       })
   );
 
+  const backfills = needFetch
+    .map((p) => {
+      const snap = p.proxyId ? proxyMap.get(p.proxyId) : null;
+      if (!snap) return null;
+      return db.collection("phoneNumbers").doc(p.id).update({
+        proxyHost: snap.host,
+        proxyPort: snap.port,
+        proxyCountry: snap.country,
+      });
+    })
+    .filter(Boolean);
+  if (backfills.length) {
+    void Promise.all(backfills).catch(() => undefined);
+  }
+
   return phones.map((p) => ({
     ...p,
-    proxy: p.proxyId ? proxyMap.get(p.proxyId) ?? null : null,
+    proxy: p.proxyId ? p.proxy ?? proxyMap.get(p.proxyId) ?? null : null,
   }));
+}
+
+export function emailProxySnapshotFields(
+  proxy: { host?: string; port?: string; country?: string } | null
+) {
+  if (!proxy) {
+    return {
+      syncedProxyHost: null,
+      syncedProxyPort: null,
+      syncedProxyCountry: null,
+    };
+  }
+  return {
+    syncedProxyHost: proxy.host ?? "",
+    syncedProxyPort: proxy.port ?? "",
+    syncedProxyCountry: proxy.country ?? "",
+  };
+}
+
+export function phoneProxySnapshotFields(
+  proxy: { host?: string; port?: string; country?: string } | null
+) {
+  if (!proxy) {
+    return { proxyHost: null, proxyPort: null, proxyCountry: null };
+  }
+  return {
+    proxyHost: proxy.host ?? "",
+    proxyPort: proxy.port ?? "",
+    proxyCountry: proxy.country ?? "",
+  };
 }
 
 export function mapProxyDoc(
@@ -205,5 +292,45 @@ export function mapEmailDoc(
     createdAt: toIso(d.createdAt),
     syncedProxyId: d.syncedProxyId ?? null,
     syncedAt: d.syncedAt ? toIso(d.syncedAt) : null,
+    syncedProxy:
+      d.syncedProxyId && d.syncedProxyHost
+        ? {
+            id: String(d.syncedProxyId),
+            host: String(d.syncedProxyHost),
+            port: String(d.syncedProxyPort ?? ""),
+            country: d.syncedProxyCountry,
+          }
+        : null,
+  };
+}
+
+export function mapPhoneDoc(
+  doc: FirebaseFirestore.QueryDocumentSnapshot | FirebaseFirestore.DocumentSnapshot
+) {
+  const d = doc.data()!;
+  return {
+    id: doc.id,
+    country: d.country,
+    number: d.number,
+    provider: d.provider,
+    purchasedAt: toIso(d.purchasedAt),
+    expiresAt: toIso(d.expiresAt),
+    status: d.status,
+    numberType: d.numberType ?? "temporary",
+    assignedTo: d.assignedTo ?? null,
+    assignedAt: d.assignedAt ? toIso(d.assignedAt) : null,
+    batchId: d.batchId ?? "",
+    notes: d.notes ?? "",
+    lane: d.lane ?? null,
+    proxyId: d.proxyId ?? null,
+    proxy:
+      d.proxyId && d.proxyHost
+        ? {
+            id: String(d.proxyId),
+            host: String(d.proxyHost),
+            port: String(d.proxyPort ?? ""),
+            country: d.proxyCountry,
+          }
+        : null,
   };
 }

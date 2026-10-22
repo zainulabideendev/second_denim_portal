@@ -27,7 +27,15 @@ export async function POST(
     const prev = doc.data()!;
     const newStatus = retire ? "retired" : "available";
 
-    await doc.ref.update({ status: newStatus, assignedTo: null, assignedAt: null, proxyId: null });
+    await doc.ref.update({
+      status: newStatus,
+      assignedTo: null,
+      assignedAt: null,
+      proxyId: null,
+      proxyHost: null,
+      proxyPort: null,
+      proxyCountry: null,
+    });
 
     if (prev.proxyId) {
       const proxyDoc = await db.collection("proxies").doc(prev.proxyId).get();

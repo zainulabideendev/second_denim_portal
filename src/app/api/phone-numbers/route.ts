@@ -2,9 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { adminDb } from "@/lib/firebase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
-import { toIso } from "@/lib/utils-server";
 import { writeAuditLog } from "@/lib/audit";
-import { enrichPhonesWithProxies } from "@/lib/sync-enrich";
+import {
+  enrichPhonesWithProxies,
+  mapPhoneDoc,
+  phoneProxySnapshotFields,
+} from "@/lib/sync-enrich";
 import { FieldValue } from "firebase-admin/firestore";
 
 const createPhoneSchema = z.object({
@@ -41,25 +44,7 @@ export async function GET(request: NextRequest) {
       snapshot = await db.collection("phoneNumbers").limit(500).get();
     }
 
-    let phones = snapshot.docs.map((doc) => {
-      const d = doc.data();
-      return {
-        id: doc.id,
-        country: d.country,
-        number: d.number,
-        provider: d.provider,
-        purchasedAt: toIso(d.purchasedAt),
-        expiresAt: toIso(d.expiresAt),
-        status: d.status,
-        numberType: d.numberType ?? "temporary",
-        assignedTo: d.assignedTo ?? null,
-        assignedAt: d.assignedAt ? toIso(d.assignedAt) : null,
-        batchId: d.batchId ?? "",
-        notes: d.notes ?? "",
-        lane: d.lane ?? null,
-        proxyId: d.proxyId ?? null,
-      };
-    });
+    let phones = snapshot.docs.map(mapPhoneDoc);
 
     if (country && assignedTo) phones = phones.filter((p) => p.country === country);
     if (status) phones = phones.filter((p) => p.status === status);
@@ -171,6 +156,7 @@ export async function POST(request: NextRequest) {
       batchId: "",
       notes: notes ?? "",
       proxyId: proxyId || null,
+      ...phoneProxySnapshotFields(proxyData),
       createdAt: now,
     });
 

@@ -5,6 +5,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
+import { phoneProxySnapshotFields } from "@/lib/sync-enrich";
 const bodySchema = z.object({
   number: z.string().min(1, "Phone number required"),
   provider: z.string().min(1, "Provider required").default("manual"),
@@ -86,6 +87,7 @@ export async function POST(
     if (prevPhoneId) {
       batch.update(db.collection("phoneNumbers").doc(prevPhoneId), {
         proxyId: null,
+        ...phoneProxySnapshotFields(null),
       });
     }
 
@@ -102,6 +104,7 @@ export async function POST(
       batchId: "",
       notes: parsed.data.notes ?? "",
       proxyId,
+      ...phoneProxySnapshotFields(proxyData),
       createdAt: now,
     });
 

@@ -5,6 +5,7 @@ import { toIso } from "@/lib/utils-server";
 import { normalizeLane } from "@/lib/pool-utils";
 import type { Country } from "@/lib/types";
 import { COUNTRIES, COUNTRY_LABELS } from "@/lib/types";
+import { getDocsByStatuses } from "@/lib/firestore-reads";
 
 export interface CountryProxyBreakdown {
   country: Country;
@@ -107,26 +108,20 @@ export async function GET(request: NextRequest) {
     const from = parseDayStart(searchParams.get("from"));
     const to = parseDayEnd(searchParams.get("to"));
 
-    const [usersSnap, proxiesSnap] = await Promise.all([
-      db.collection("users").limit(500).get(),
-      db.collection("proxies").limit(2000).get(),
+    const [usersSnap, proxyDocs] = await Promise.all([
+      db.collection("users").where("role", "==", "salesman").limit(150).get(),
+      getDocsByStatuses(db, "proxies", ["assigned", "flagged", "expired"], 500),
     ]);
 
-    const salesmen = usersSnap.docs.filter((d) => {
-      const role = d.data().role ?? "salesman";
-      return role === "salesman";
-    });
+    const salesmen = usersSnap.docs;
 
     const rows: UserProxyStatusRow[] = salesmen.map((userDoc) => {
       const u = userDoc.data();
       const uid = userDoc.id;
 
-      const userProxies = proxiesSnap.docs.filter((p) => {
+      const userProxies = proxyDocs.filter((p) => {
         const data = p.data();
         if (data.assignedTo !== uid) return false;
-        // Keep assigned / flagged / expired that are still tied to the user
-        const status = data.status as string;
-        if (!["assigned", "flagged", "expired"].includes(status)) return false;
 
         if (from || to) {
           const ts = assignedAtMs(data);

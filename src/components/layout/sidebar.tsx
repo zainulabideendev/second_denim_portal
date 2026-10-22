@@ -46,11 +46,7 @@ export function Sidebar() {
 
   const { data: notifications } = useQuery({
     queryKey: ["notifications", "badge"],
-    queryFn: () => api.get<Notification[]>("/api/notifications?limit=15"),
-    // Badge only — poll slowly and never in background tabs
-    refetchInterval: 2 * 60_000,
-    refetchIntervalInBackground: false,
-    staleTime: 60_000,
+    queryFn: () => api.get<Notification[]>("/api/notifications?limit=10"),
   });
 
   const unreadCount = notifications?.filter((n) => !n.read).length ?? 0;

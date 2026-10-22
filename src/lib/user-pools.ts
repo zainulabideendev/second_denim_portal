@@ -68,16 +68,20 @@ export async function enrichPoolRows(
   if (!assignments.length) return [];
 
   const db = adminDb();
-  const userIds = [...new Set(assignments.map((a) => a.userId))];
-  const proxySnaps = await Promise.all(
-    userIds.map((uid) =>
-      db.collection("proxies").where("assignedTo", "==", uid).get()
-    )
-  );
+  const userIds = new Set(assignments.map((a) => a.userId));
+  const assignedSnap = await db
+    .collection("proxies")
+    .where("status", "==", "assigned")
+    .limit(500)
+    .get();
 
   const proxiesByUser = new Map<string, FirebaseFirestore.QueryDocumentSnapshot[]>();
-  userIds.forEach((uid, i) => {
-    proxiesByUser.set(uid, proxySnaps[i].docs);
+  assignedSnap.docs.forEach((doc) => {
+    const uid = doc.data().assignedTo as string | undefined;
+    if (!uid || !userIds.has(uid)) return;
+    const list = proxiesByUser.get(uid);
+    if (list) list.push(doc);
+    else proxiesByUser.set(uid, [doc]);
   });
 
   return assignments.map((assignment) => {

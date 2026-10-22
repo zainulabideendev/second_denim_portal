@@ -36,11 +36,10 @@ export async function assignAvailablePhone(
 ): Promise<PhoneNumber | null> {
   const db = adminDb();
 
-  // Single where clause — filter + sort in JS to avoid composite index
   const snapshot = await db
     .collection("phoneNumbers")
     .where("country", "==", country)
-    .limit(200)
+    .limit(50)
     .get();
 
   const available = snapshot.docs

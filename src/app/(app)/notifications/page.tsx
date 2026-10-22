@@ -24,7 +24,7 @@ export default function NotificationsPage() {
 
   const { data: notifications, isLoading } = useQuery({
     queryKey: ["notifications", "page"],
-    queryFn: () => api.get<Notification[]>("/api/notifications?limit=50"),
+    queryFn: () => api.get<Notification[]>("/api/notifications?limit=20"),
   });
 
   const markReadMutation = useMutation({

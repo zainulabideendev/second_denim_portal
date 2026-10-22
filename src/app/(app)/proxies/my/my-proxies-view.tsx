@@ -157,9 +157,6 @@ export function MyProxiesView({ user }: { user: AppUser }) {
   const { data, isLoading } = useQuery({
     queryKey: ["my-proxies"],
     queryFn: () => api.get<PoolResponse>("/api/proxies/mine"),
-    refetchInterval: 2 * 60_000,
-    refetchIntervalInBackground: false,
-    staleTime: 60_000,
   });
 
   const poolCountries = data?.poolCountries ?? [];

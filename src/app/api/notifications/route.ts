@@ -8,10 +8,10 @@ export async function GET(request: NextRequest) {
     const actor = await requireAuth();
     const db = adminDb();
     const { searchParams } = new URL(request.url);
-    const limitRaw = Number(searchParams.get("limit") ?? "20");
+    const limitRaw = Number(searchParams.get("limit") ?? "10");
     const limit = Number.isFinite(limitRaw)
-      ? Math.min(Math.max(Math.floor(limitRaw), 1), 50)
-      : 20;
+      ? Math.min(Math.max(Math.floor(limitRaw), 1), 20)
+      : 10;
 
     const snapshot = await db
       .collection("notifications")

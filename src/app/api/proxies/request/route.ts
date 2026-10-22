@@ -39,6 +39,8 @@ export async function POST(request: NextRequest) {
     await reqRef.set({
       type: "proxy",
       requestedBy: actor.uid,
+      requestedByName: actor.name,
+      requestedByEmail: actor.email,
       country,
       reason,
       status: "pending",

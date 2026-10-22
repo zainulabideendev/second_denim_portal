@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { adminAuth, adminDb } from "@/lib/firebase-admin";
 import { createSessionCookie, SESSION_COOKIE_NAME } from "@/lib/auth";
+import {
+  PROFILE_COOKIE_NAME,
+  profileCookieOptions,
+  signUserProfileCookie,
+} from "@/lib/user-profile-cookie";
+import type { AppUser } from "@/lib/types";
 
 const loginSchema = z.object({
   idToken: z.string().min(1, "ID token is required"),
@@ -45,15 +51,29 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const user: AppUser = {
+      uid,
+      name: userData.name ?? "",
+      email: userData.email ?? decodedToken.email ?? "",
+      role: userData.role ?? "salesman",
+      country: userData.country,
+      poolCountries: userData.poolCountries ?? undefined,
+      activeProxyLimit: userData.activeProxyLimit ?? 4,
+      status: userData.status ?? "active",
+      createdAt:
+        userData.createdAt?.toDate?.()?.toISOString() ?? new Date().toISOString(),
+    };
+
     // Create a session cookie
     const sessionCookie = await createSessionCookie(idToken);
+    const profileCookie = signUserProfileCookie(user);
 
     const response = NextResponse.json({
       success: true,
       data: {
         uid,
-        role: userData.role,
-        name: userData.name,
+        role: user.role,
+        name: user.name,
       },
     });
 
@@ -64,6 +84,14 @@ export async function POST(request: NextRequest) {
       maxAge: 7 * 24 * 60 * 60, // 7 days
       path: "/",
     });
+
+    if (profileCookie) {
+      response.cookies.set(
+        PROFILE_COOKIE_NAME,
+        profileCookie,
+        profileCookieOptions()
+      );
+    }
 
     return response;
   } catch (error) {

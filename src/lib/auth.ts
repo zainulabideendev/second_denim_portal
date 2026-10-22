@@ -2,8 +2,15 @@ import { cache } from "react";
 import { cookies } from "next/headers";
 import { adminAuth, adminDb } from "@/lib/firebase-admin";
 import type { AppUser, Role } from "@/lib/types";
+import {
+  PROFILE_COOKIE_NAME,
+  profileCookieOptions,
+  signUserProfileCookie,
+  verifyUserProfileCookie,
+} from "@/lib/user-profile-cookie";
 
 export const SESSION_COOKIE_NAME = "session";
+export { PROFILE_COOKIE_NAME };
 const SESSION_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 /** Short in-process cache — cuts repeat users/{uid} reads on warm instances. */
@@ -84,16 +91,36 @@ async function loadUserFromFirestore(
 
 /**
  * Get the currently authenticated user.
- * Deduped per React request via cache(); also TTL-cached in process memory.
+ * Prefers the signed profile cookie (no Firestore read). Falls back to
+ * users/{uid} only when the profile is missing or expired.
  */
 export const getCurrentUser = cache(async (): Promise<AppUser | null> => {
-  const sessionCookie = await getSessionCookie();
+  const cookieStore = await cookies();
+  const sessionCookie = cookieStore.get(SESSION_COOKIE_NAME)?.value;
   if (!sessionCookie) return null;
 
   const session = await verifySession(sessionCookie);
   if (!session) return null;
 
-  return loadUserFromFirestore(session.uid, session.email);
+  const profile = verifyUserProfileCookie(
+    cookieStore.get(PROFILE_COOKIE_NAME)?.value
+  );
+  if (profile && profile.uid === session.uid) {
+    return profile;
+  }
+
+  const user = await loadUserFromFirestore(session.uid, session.email);
+  if (user) {
+    const token = signUserProfileCookie(user);
+    if (token) {
+      try {
+        cookieStore.set(PROFILE_COOKIE_NAME, token, profileCookieOptions());
+      } catch {
+        // Server Components cannot set cookies; Route Handlers can.
+      }
+    }
+  }
+  return user;
 });
 
 // ─── Require auth — throws 401/403 via response if not met ───────────────────

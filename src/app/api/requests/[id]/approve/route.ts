@@ -48,6 +48,8 @@ export async function POST(
     await reqDoc.ref.update({
       status: newStatus,
       reviewedBy: actor.uid,
+      reviewedByName: actor.name,
+      reviewedByEmail: actor.email,
       reviewedAt: now,
       fulfilledItemId,
     });

@@ -40,6 +40,8 @@ export async function POST(
     await reqDoc.ref.update({
       status: "rejected",
       reviewedBy: actor.uid,
+      reviewedByName: actor.name,
+      reviewedByEmail: actor.email,
       reviewedAt: now,
       rejectionReason: reason,
     });

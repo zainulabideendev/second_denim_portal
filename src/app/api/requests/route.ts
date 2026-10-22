@@ -13,28 +13,45 @@ export async function GET(request: NextRequest) {
     const status = searchParams.get("status");
     const type = searchParams.get("type");
 
-    // No orderBy + where combos — fetch all, filter + sort in JS.
-    const snapshot = await db.collection("requests").limit(500).get();
+    let snapshot: FirebaseFirestore.QuerySnapshot;
+    if (status) {
+      snapshot = await db
+        .collection("requests")
+        .where("status", "==", status)
+        .limit(150)
+        .get();
+    } else {
+      snapshot = await db.collection("requests").limit(150).get();
+    }
 
-    // Collect unique UIDs for user lookup
-    const uids = new Set<string>();
+    const missingUids = new Set<string>();
     snapshot.docs.forEach((doc) => {
       const d = doc.data();
-      uids.add(d.requestedBy);
-      if (d.reviewedBy) uids.add(d.reviewedBy);
+      if (!d.requestedByName && d.requestedBy) missingUids.add(d.requestedBy);
+      if (d.reviewedBy && !d.reviewedByName) missingUids.add(d.reviewedBy);
     });
 
-    const userDocs = await Promise.all(
-      Array.from(uids).map((uid) => db.collection("users").doc(uid).get())
-    );
+    const userDocs = missingUids.size
+      ? await Promise.all(
+          Array.from(missingUids).map((uid) =>
+            db.collection("users").doc(uid).get()
+          )
+        )
+      : [];
     const userMap = new Map(
       userDocs.map((doc) => [doc.id, doc.exists ? doc.data() : null])
     );
 
     let requests = snapshot.docs.map((doc) => {
       const d = doc.data();
-      const reqUser = userMap.get(d.requestedBy);
-      const revUser = d.reviewedBy ? userMap.get(d.reviewedBy) : null;
+      const reqUser = d.requestedByName
+        ? { name: d.requestedByName, email: d.requestedByEmail ?? "" }
+        : userMap.get(d.requestedBy);
+      const revUser = d.reviewedBy
+        ? d.reviewedByName
+          ? { name: d.reviewedByName, email: d.reviewedByEmail ?? "" }
+          : userMap.get(d.reviewedBy)
+        : null;
       return {
         id: doc.id,
         type: d.type,
@@ -55,11 +72,8 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    // Filter in JS
-    if (status) requests = requests.filter((r) => r.status === status);
     if (type) requests = requests.filter((r) => r.type === type);
 
-    // Sort newest first
     requests.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
     return NextResponse.json({ success: true, data: requests });

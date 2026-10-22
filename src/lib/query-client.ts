@@ -10,7 +10,7 @@ export function getQueryClient() {
       defaultOptions: {
         queries: {
           // Longer stale window = fewer /api hits = fewer Firestore reads
-          staleTime: 3 * 60 * 1000, // 3 minutes
+          staleTime: 5 * 60 * 1000, // 5 minutes
           gcTime: 10 * 60 * 1000,
           refetchOnWindowFocus: false,
           retry: 1,

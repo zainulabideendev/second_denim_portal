@@ -16,23 +16,24 @@ import {
   getTotalPoolSlots,
   normalizeLane,
 } from "@/lib/pool-utils";
+import { getDocsByStatuses } from "@/lib/firestore-reads";
 
 export async function GET() {
   try {
     await requireAuth(["admin"]);
 
     const db = adminDb();
-    const [config, usersSnap, proxiesSnap] = await Promise.all([
+    const [config, usersSnap, proxyDocs] = await Promise.all([
       getPoolConfig(),
-      db.collection("users").where("role", "==", "salesman").get(),
-      db.collection("proxies").limit(500).get(),
+      db.collection("users").where("role", "==", "salesman").limit(150).get(),
+      getDocsByStatuses(db, "proxies", ["assigned", "fresh", "available"], 400),
     ]);
 
     const stockByCountry = Object.fromEntries(
       COUNTRIES.map((c) => [c, 0])
     ) as Record<Country, number>;
 
-    proxiesSnap.docs.forEach((d) => {
+    proxyDocs.forEach((d) => {
       const data = d.data();
       const country = data.country as Country;
       const status = data.status;
@@ -66,7 +67,7 @@ export async function GET() {
           active: 0,
         };
 
-        proxiesSnap.docs
+        proxyDocs
           .filter(
             (p) =>
               p.data().assignedTo === doc.id &&

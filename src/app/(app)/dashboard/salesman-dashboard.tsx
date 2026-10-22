@@ -4,7 +4,8 @@ import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import type { PoolResponse } from "@/app/api/proxies/mine/route";
-import type { AppUser, DashboardSummary, Proxy, PhoneNumber, ItemRequest } from "@/lib/types";
+import type { AppUser, Proxy, PhoneNumber, ItemRequest } from "@/lib/types";
+import { differenceInDays } from "date-fns";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Shield, Phone, Clock, AlertTriangle, ArrowRight } from "lucide-react";
@@ -27,11 +28,6 @@ interface Props {
 }
 
 export function SalesmanDashboard({ user }: Props) {
-  const { data: summary, isLoading: summaryLoading } = useQuery({
-    queryKey: ["dashboard-summary"],
-    queryFn: () => api.get<DashboardSummary>("/api/dashboard/summary"),
-  });
-
   const { data: poolData, isLoading: proxiesLoading } = useQuery({
     queryKey: ["my-proxies"],
     queryFn: () => api.get<PoolResponse>("/api/proxies/mine"),
@@ -54,8 +50,13 @@ export function SalesmanDashboard({ user }: Props) {
         return [...pool.backup, ...pool.active];
       })
     : [];
-
+  const banned = poolData?.banned ?? [];
+  const metricLoading = proxiesLoading || phonesLoading || requestsLoading;
   const pendingRequests = requests?.filter((r) => r.status === "pending") ?? [];
+  const now = new Date();
+  const expiringCount = [...proxies, ...banned, ...(phones ?? [])].filter(
+    (item) => differenceInDays(new Date(item.expiresAt), now) <= 7
+  ).length;
   const firstName = user.name.split(" ")[0];
 
   return (
@@ -69,25 +70,25 @@ export function SalesmanDashboard({ user }: Props) {
         items={[
           {
             label: "Proxies",
-            value: summaryLoading ? "—" : (summary?.myActiveProxies ?? 0),
+            value: metricLoading ? "—" : proxies.length + banned.length,
             hint: `Limit ${user.activeProxyLimit}`,
             variant: "success",
           },
           {
             label: "Numbers",
-            value: summaryLoading ? "—" : (summary?.myActivePhones ?? 0),
+            value: metricLoading ? "—" : (phones?.length ?? 0),
             hint: "Assigned",
             variant: "default",
           },
           {
             label: "Pending",
-            value: summaryLoading ? "—" : (summary?.myPendingRequests ?? 0),
+            value: metricLoading ? "—" : pendingRequests.length,
             hint: "Requests",
             variant: "warning",
           },
           {
             label: "Expiring",
-            value: summaryLoading ? "—" : (summary?.myExpiringSoon ?? 0),
+            value: metricLoading ? "—" : expiringCount,
             hint: "Within 7 days",
             variant: "danger",
           },

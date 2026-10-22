@@ -26,7 +26,13 @@ export async function linkProxyToEmail(
 
   if (proxyData.syncedEmailId && proxyData.syncedEmailId !== emailId) {
     const oldEmailRef = db.collection("emails").doc(proxyData.syncedEmailId);
-    batch.update(oldEmailRef, { syncedProxyId: null, syncedAt: null });
+    batch.update(oldEmailRef, {
+      syncedProxyId: null,
+      syncedAt: null,
+      syncedProxyHost: null,
+      syncedProxyPort: null,
+      syncedProxyCountry: null,
+    });
   }
 
   if (emailData.syncedProxyId && emailData.syncedProxyId !== proxyId) {
@@ -46,7 +52,13 @@ export async function linkProxyToEmail(
     syncedEmailEmail: emailData.email ?? "",
     syncedEmailPassword: emailData.password ?? "",
   });
-  batch.update(emailRef, { syncedProxyId: proxyId, syncedAt: now });
+  batch.update(emailRef, {
+    syncedProxyId: proxyId,
+    syncedAt: now,
+    syncedProxyHost: proxyData.host ?? "",
+    syncedProxyPort: proxyData.port ?? "",
+    syncedProxyCountry: proxyData.country ?? "",
+  });
 
   await batch.commit();
 
@@ -85,6 +97,9 @@ export async function unlinkProxyEmail(
   batch.update(db.collection("emails").doc(emailId), {
     syncedProxyId: null,
     syncedAt: null,
+    syncedProxyHost: null,
+    syncedProxyPort: null,
+    syncedProxyCountry: null,
   });
 
   await batch.commit();

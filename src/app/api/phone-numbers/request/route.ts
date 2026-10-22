@@ -32,9 +32,7 @@ export async function POST(request: NextRequest) {
     const { country, reason } = parsed.data;
     const db = adminDb();
 
-    const userDoc = await db.collection("users").doc(actor.uid).get();
-    const userData = userDoc.data()!;
-    const limit: number = userData.activeProxyLimit ?? 4;
+    const limit: number = actor.activeProxyLimit ?? 4;
 
     const activeCount = await countActivePhones(actor.uid);
 
@@ -54,6 +52,8 @@ export async function POST(request: NextRequest) {
       await reqRef.set({
         type: "phone",
         requestedBy: actor.uid,
+        requestedByName: actor.name,
+        requestedByEmail: actor.email,
         country,
         reason,
         status: "pending",
