@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { addDays, format } from "date-fns";
-import { FieldValue } from "firebase-admin/firestore";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
 import { phoneProxySnapshotFields } from "@/lib/sync-enrich";
+
 const bodySchema = z.object({
   number: z.string().min(1, "Phone number required"),
   provider: z.string().min(1, "Provider required").default("manual"),
@@ -37,89 +37,105 @@ export async function POST(
 
     if (!parsed.success) {
       return NextResponse.json(
-        { success: false, error: parsed.error.issues[0]?.message ?? "Invalid data" },
+        {
+          success: false,
+          error: parsed.error.issues[0]?.message ?? "Invalid data",
+        },
         { status: 400 }
       );
     }
 
-    const db = adminDb();
-    const proxyRef = db.collection("proxies").doc(proxyId);
-    const proxyDoc = await proxyRef.get();
-    if (!proxyDoc.exists) {
-      return NextResponse.json({ success: false, error: "Proxy not found" }, { status: 404 });
+    const { data: proxyData } = await supabaseAdmin()
+      .from("proxies")
+      .select("*")
+      .eq("id", proxyId)
+      .maybeSingle();
+
+    if (!proxyData) {
+      return NextResponse.json(
+        { success: false, error: "Proxy not found" },
+        { status: 404 }
+      );
     }
 
-    const proxyData = proxyDoc.data()!;
     const number = parsed.data.number.trim();
     const country =
       parsed.data.country ??
       (["FR", "BE", "UK", "DE"].includes(proxyData.country)
-        ? (proxyData.country as "FR" | "BE" | "UK" | "DE")
+        ? proxyData.country
         : "UK");
     const today = format(new Date(), "yyyy-MM-dd");
     const purchasedAt = parsed.data.purchasedAt ?? today;
     const expiresAt =
       parsed.data.expiresAt ?? format(addDays(new Date(), 30), "yyyy-MM-dd");
 
-    const existing = await db
-      .collection("phoneNumbers")
-      .where("number", "==", number)
-      .limit(1)
-      .get();
+    const { data: existing } = await supabaseAdmin()
+      .from("phone_numbers")
+      .select("id")
+      .eq("number", number)
+      .limit(1);
 
-    if (!existing.empty) {
+    if (existing?.length) {
       return NextResponse.json(
-        { success: false, error: "A phone number with this value already exists" },
+        {
+          success: false,
+          error: "A phone number with this value already exists",
+        },
         { status: 409 }
       );
     }
 
-    const phoneRef = db.collection("phoneNumbers").doc();
-    const now = FieldValue.serverTimestamp();
-    const assignedTo = (proxyData.assignedTo as string | null) ?? null;
-    const assignedAt = assignedTo ? new Date() : null;
+    const assignedTo = proxyData.assigned_to ?? null;
+    const assignedAt = assignedTo ? new Date().toISOString() : null;
 
-    const batch = db.batch();
-
-    // Clear previous phone link on this proxy
-    const prevPhoneId =
-      proxyData.phoneId != null ? String(proxyData.phoneId).trim() : "";
+    const prevPhoneId = proxyData.phone_id?.trim() ?? "";
     if (prevPhoneId) {
-      batch.update(db.collection("phoneNumbers").doc(prevPhoneId), {
-        proxyId: null,
-        ...phoneProxySnapshotFields(null),
-      });
+      await supabaseAdmin()
+        .from("phone_numbers")
+        .update({
+          proxy_id: null,
+          ...phoneProxySnapshotFields(null),
+        })
+        .eq("id", prevPhoneId);
     }
 
-    batch.set(phoneRef, {
-      country,
-      number,
-      provider: parsed.data.provider.trim() || "manual",
-      purchasedAt: new Date(purchasedAt),
-      expiresAt: new Date(expiresAt),
-      numberType: parsed.data.numberType ?? "temporary",
-      status: assignedTo ? "active" : "available",
-      assignedTo,
-      assignedAt,
-      batchId: "",
-      notes: parsed.data.notes ?? "",
-      proxyId,
-      ...phoneProxySnapshotFields(proxyData),
-      createdAt: now,
-    });
+    const { data: phoneRow, error: insertError } = await supabaseAdmin()
+      .from("phone_numbers")
+      .insert({
+        country,
+        number,
+        provider: parsed.data.provider.trim() || "manual",
+        purchased_at: new Date(purchasedAt).toISOString(),
+        expires_at: new Date(expiresAt).toISOString(),
+        number_type: parsed.data.numberType ?? "temporary",
+        status: assignedTo ? "active" : "available",
+        assigned_to: assignedTo,
+        assigned_at: assignedAt,
+        batch_id: "",
+        notes: parsed.data.notes ?? "",
+        proxy_id: proxyId,
+        ...phoneProxySnapshotFields(proxyData),
+      })
+      .select("id")
+      .single();
 
-    batch.update(proxyRef, {
-      phoneId: phoneRef.id,
-      phoneNumber: number,
-    });
+    if (insertError || !phoneRow) {
+      throw new Error(insertError?.message ?? "Failed to create phone");
+    }
 
-    await batch.commit();
+    await supabaseAdmin()
+      .from("proxies")
+      .update({
+        phone_id: phoneRow.id,
+        phone_number: number,
+      })
+      .eq("id", proxyId);
 
     await writeAuditLog({
       actorUid: actor.uid,
       action: "phone.assigned",
       targetType: "phone",
-      targetId: phoneRef.id,
+      targetId: phoneRow.id,
       metadata: {
         number,
         country,
@@ -132,7 +148,7 @@ export async function POST(
     return NextResponse.json({
       success: true,
       data: {
-        phoneId: phoneRef.id,
+        phoneId: phoneRow.id,
         proxyId,
         number,
         country,

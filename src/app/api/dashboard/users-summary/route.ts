@@ -1,11 +1,6 @@
 import { NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
-import { toIso } from "@/lib/utils-server";
-import {
-  countByStatuses,
-  getDocsByStatuses,
-} from "@/lib/firestore-reads";
 
 export interface UserProxyStat {
   uid: string;
@@ -24,59 +19,90 @@ export interface UserProxyStat {
 
 export async function GET() {
   try {
-    const actor = await requireAuth(["admin", "manager"]);
-    void actor;
-    const db = adminDb();
+    await requireAuth(["admin", "manager"]);
 
     const [
-      usersSnap,
-      assignedProxies,
-      flaggedProxies,
-      expiredProxies,
-      assignedPhones,
-      flaggedPhones,
-      expiredPhones,
-      availableProxyCount,
-      availablePhoneCount,
+      usersRes,
+      assignedProxiesRes,
+      flaggedProxiesRes,
+      expiredProxiesRes,
+      assignedPhonesRes,
+      flaggedPhonesRes,
+      expiredPhonesRes,
+      availableProxyRes,
+      availablePhoneRes,
     ] = await Promise.all([
-      db.collection("users").limit(150).get(),
-      getDocsByStatuses(db, "proxies", ["assigned"], 500),
-      getDocsByStatuses(db, "proxies", ["flagged"], 200),
-      getDocsByStatuses(db, "proxies", ["expired"], 200),
-      getDocsByStatuses(db, "phoneNumbers", ["active", "assigned"], 400),
-      getDocsByStatuses(
-        db,
-        "phoneNumbers",
-        ["flagged", "banned", "banned_with_balance"],
-        200
-      ),
-      getDocsByStatuses(db, "phoneNumbers", ["expired"], 200),
-      countByStatuses(db, "proxies", ["fresh", "available"]),
-      countByStatuses(db, "phoneNumbers", ["available"]),
+      supabaseAdmin().from("profiles").select("*").limit(150),
+      supabaseAdmin()
+        .from("proxies")
+        .select("id, assigned_to")
+        .eq("status", "assigned")
+        .limit(500),
+      supabaseAdmin()
+        .from("proxies")
+        .select("id, assigned_to")
+        .eq("status", "flagged")
+        .limit(200),
+      supabaseAdmin()
+        .from("proxies")
+        .select("id, assigned_to")
+        .eq("status", "expired")
+        .limit(200),
+      supabaseAdmin()
+        .from("phone_numbers")
+        .select("id, assigned_to")
+        .in("status", ["active", "assigned"])
+        .limit(400),
+      supabaseAdmin()
+        .from("phone_numbers")
+        .select("id, assigned_to")
+        .in("status", ["flagged", "banned", "banned_with_balance"])
+        .limit(200),
+      supabaseAdmin()
+        .from("phone_numbers")
+        .select("id, assigned_to")
+        .eq("status", "expired")
+        .limit(200),
+      supabaseAdmin()
+        .from("proxies")
+        .select("id", { count: "exact", head: true })
+        .in("status", ["fresh", "available"]),
+      supabaseAdmin()
+        .from("phone_numbers")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "available"),
     ]);
 
+    const users = usersRes.data ?? [];
+    const assignedProxies = assignedProxiesRes.data ?? [];
+    const flaggedProxies = flaggedProxiesRes.data ?? [];
+    const expiredProxies = expiredProxiesRes.data ?? [];
+    const assignedPhones = assignedPhonesRes.data ?? [];
+    const flaggedPhones = flaggedPhonesRes.data ?? [];
+    const expiredPhones = expiredPhonesRes.data ?? [];
+    const availableProxyCount = availableProxyRes.count ?? 0;
+    const availablePhoneCount = availablePhoneRes.count ?? 0;
+
     const countForUser = (
-      docs: FirebaseFirestore.QueryDocumentSnapshot[],
+      docs: Array<{ assigned_to: string | null }>,
       uid: string
-    ) => docs.filter((d) => d.data().assignedTo === uid).length;
+    ) => docs.filter((d) => d.assigned_to === uid).length;
 
-    const stats: UserProxyStat[] = usersSnap.docs.map((doc) => {
-      const u = doc.data();
-      const uid = doc.id;
-
+    const stats: UserProxyStat[] = users.map((u) => {
+      const uid = u.id;
       return {
         uid,
         name: u.name ?? "",
         email: u.email ?? "",
         role: u.role ?? "salesman",
         status: u.status ?? "active",
-        activeProxyLimit: u.activeProxyLimit ?? 4,
+        activeProxyLimit: u.active_proxy_limit ?? 4,
         activeProxies: countForUser(assignedProxies, uid),
         activePhones: countForUser(assignedPhones, uid),
         flaggedProxies: countForUser(flaggedProxies, uid),
         flaggedPhones: countForUser(flaggedPhones, uid),
         expiredProxies: countForUser(expiredProxies, uid),
-        createdAt: toIso(u.createdAt),
+        createdAt: u.created_at,
       };
     });
 
@@ -104,10 +130,9 @@ export async function GET() {
           flaggedPhones.length,
       },
       users: {
-        total: usersSnap.size,
-        active: usersSnap.docs.filter((d) => d.data().status === "active").length,
-        disabled: usersSnap.docs.filter((d) => d.data().status === "disabled")
-          .length,
+        total: users.length,
+        active: users.filter((d) => d.status === "active").length,
+        disabled: users.filter((d) => d.status === "disabled").length,
       },
     };
 

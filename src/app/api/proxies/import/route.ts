@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
-import { FieldValue } from "firebase-admin/firestore";
 
 const proxyRowSchema = z.object({
   host: z.string().min(1),
@@ -12,8 +11,14 @@ const proxyRowSchema = z.object({
   password: z.string().min(1),
   country: z.enum(["FR", "BE", "UK", "DE"]),
   provider: z.string().min(1),
-  purchasedAt: z.string().datetime({ offset: true }).or(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)),
-  expiresAt: z.string().datetime({ offset: true }).or(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)),
+  purchasedAt: z
+    .string()
+    .datetime({ offset: true })
+    .or(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)),
+  expiresAt: z
+    .string()
+    .datetime({ offset: true })
+    .or(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)),
   notes: z.string().optional().default(""),
 });
 
@@ -37,49 +42,50 @@ export async function POST(request: NextRequest) {
     }
 
     const { rows, rawFileName } = parsed.data;
-    const db = adminDb();
 
-    // Create import batch record
-    const batchRef = db.collection("importBatches").doc();
-    const batchId = batchRef.id;
+    const { data: batch, error: batchError } = await supabaseAdmin()
+      .from("import_batches")
+      .insert({
+        type: "proxy",
+        imported_by: actor.uid,
+        count: rows.length,
+        raw_file_name: rawFileName,
+      })
+      .select("id")
+      .single();
 
-    // Write proxies in a single Firestore batch
-    const writeBatch = db.batch();
-
-    writeBatch.set(batchRef, {
-      type: "proxy",
-      importedBy: actor.uid,
-      importedAt: FieldValue.serverTimestamp(),
-      count: rows.length,
-      rawFileName,
-      createdAt: FieldValue.serverTimestamp(),
-    });
-
-    const proxyIds: string[] = [];
-    for (const row of rows) {
-      const proxyRef = db.collection("proxies").doc();
-      proxyIds.push(proxyRef.id);
-      writeBatch.set(proxyRef, {
-        country: row.country,
-        host: row.host,
-        port: row.port,
-        username: row.username,
-        password: row.password,
-        provider: row.provider,
-        purchasedAt: new Date(row.purchasedAt),
-        expiresAt: new Date(row.expiresAt),
-        status: "fresh",
-        assignedTo: null,
-        assignedAt: null,
-        batchId,
-        notes: row.notes ?? "",
-        syncedEmailId: null,
-        syncedAt: null,
-        createdAt: FieldValue.serverTimestamp(),
-      });
+    if (batchError || !batch) {
+      throw new Error(batchError?.message ?? "Failed to create import batch");
     }
 
-    await writeBatch.commit();
+    const batchId = batch.id;
+
+    const { data: proxies, error: insertError } = await supabaseAdmin()
+      .from("proxies")
+      .insert(
+        rows.map((row) => ({
+          country: row.country,
+          host: row.host,
+          port: row.port,
+          username: row.username,
+          password: row.password,
+          provider: row.provider,
+          purchased_at: new Date(row.purchasedAt).toISOString(),
+          expires_at: new Date(row.expiresAt).toISOString(),
+          status: "fresh" as const,
+          assigned_to: null,
+          assigned_at: null,
+          batch_id: batchId,
+          notes: row.notes ?? "",
+          synced_email_id: null,
+          synced_at: null,
+        }))
+      )
+      .select("id");
+
+    if (insertError) throw new Error(insertError.message);
+
+    const proxyIds = (proxies ?? []).map((p) => p.id);
 
     await writeAuditLog({
       actorUid: actor.uid,

@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import { toIso } from "@/lib/utils-server";
 import { normalizeLane } from "@/lib/pool-utils";
 import type { Country } from "@/lib/types";
 import { COUNTRIES, COUNTRY_LABELS } from "@/lib/types";
-import { getDocsByStatuses } from "@/lib/firestore-reads";
 
 export interface CountryProxyBreakdown {
   country: Country;
@@ -24,17 +23,11 @@ export interface UserProxyStatusRow {
   email: string;
   status: string;
   activeProxyLimit: number;
-  /** Assigned + active lane, not restricted */
   active: number;
-  /** Assigned + backup lane */
   backup: number;
-  /** Assigned + active + restricted */
   restricted: number;
-  /** Flagged / banned */
   banned: number;
-  /** Expired while still linked to user */
   expired: number;
-  /** All proxies currently linked to this user in the filter */
   total: number;
   byCountry: CountryProxyBreakdown[];
 }
@@ -49,6 +42,15 @@ export interface ProxyStatusTotals {
   salesmen: number;
 }
 
+type ProxyRow = {
+  assigned_to: string | null;
+  assigned_at: string | null;
+  status: string;
+  lane: string | null;
+  restricted: boolean;
+  country: string;
+};
+
 function parseDayStart(value: string | null): Date | null {
   if (!value) return null;
   const d = new Date(`${value}T00:00:00.000`);
@@ -61,22 +63,20 @@ function parseDayEnd(value: string | null): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-function assignedAtMs(data: FirebaseFirestore.DocumentData): number | null {
-  const raw = data.assignedAt;
-  if (!raw) return null;
-  if (typeof raw?.toDate === "function") return raw.toDate().getTime();
-  const d = new Date(raw);
+function assignedAtMs(data: ProxyRow): number | null {
+  if (!data.assigned_at) return null;
+  const d = new Date(data.assigned_at);
   return Number.isNaN(d.getTime()) ? null : d.getTime();
 }
 
-function classifyProxy(data: FirebaseFirestore.DocumentData): {
+function classifyProxy(data: ProxyRow): {
   active: number;
   backup: number;
   restricted: number;
   banned: number;
   expired: number;
 } {
-  const status = data.status as string;
+  const status = data.status;
   if (status === "flagged") {
     return { active: 0, backup: 0, restricted: 0, banned: 1, expired: 0 };
   }
@@ -103,25 +103,33 @@ function classifyProxy(data: FirebaseFirestore.DocumentData): {
 export async function GET(request: NextRequest) {
   try {
     await requireAuth(["admin", "manager"]);
-    const db = adminDb();
     const { searchParams } = new URL(request.url);
     const from = parseDayStart(searchParams.get("from"));
     const to = parseDayEnd(searchParams.get("to"));
 
-    const [usersSnap, proxyDocs] = await Promise.all([
-      db.collection("users").where("role", "==", "salesman").limit(150).get(),
-      getDocsByStatuses(db, "proxies", ["assigned", "flagged", "expired"], 500),
+    const [usersRes, proxiesRes] = await Promise.all([
+      supabaseAdmin()
+        .from("profiles")
+        .select("*")
+        .eq("role", "salesman")
+        .limit(150),
+      supabaseAdmin()
+        .from("proxies")
+        .select(
+          "assigned_to, assigned_at, status, lane, restricted, country"
+        )
+        .in("status", ["assigned", "flagged", "expired"])
+        .limit(1500),
     ]);
 
-    const salesmen = usersSnap.docs;
+    const salesmen = usersRes.data ?? [];
+    const proxyDocs = proxiesRes.data ?? [];
 
-    const rows: UserProxyStatusRow[] = salesmen.map((userDoc) => {
-      const u = userDoc.data();
-      const uid = userDoc.id;
+    const rows: UserProxyStatusRow[] = salesmen.map((u) => {
+      const uid = u.id;
 
-      const userProxies = proxyDocs.filter((p) => {
-        const data = p.data();
-        if (data.assignedTo !== uid) return false;
+      const userProxies = proxyDocs.filter((data) => {
+        if (data.assigned_to !== uid) return false;
 
         if (from || to) {
           const ts = assignedAtMs(data);
@@ -140,7 +148,13 @@ export async function GET(request: NextRequest) {
 
       const countryMap = new Map<
         Country,
-        { active: number; backup: number; restricted: number; banned: number; expired: number }
+        {
+          active: number;
+          backup: number;
+          restricted: number;
+          banned: number;
+          expired: number;
+        }
       >();
 
       for (const c of COUNTRIES) {
@@ -153,8 +167,7 @@ export async function GET(request: NextRequest) {
         });
       }
 
-      for (const p of userProxies) {
-        const data = p.data();
+      for (const data of userProxies) {
         const cls = classifyProxy(data);
         active += cls.active;
         backup += cls.backup;
@@ -188,7 +201,7 @@ export async function GET(request: NextRequest) {
         name: u.name ?? "",
         email: u.email ?? "",
         status: u.status ?? "active",
-        activeProxyLimit: u.activeProxyLimit ?? 4,
+        activeProxyLimit: u.active_proxy_limit ?? 4,
         active,
         backup,
         restricted,

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
 import { toIso } from "@/lib/utils-server";
@@ -34,34 +34,50 @@ export async function POST(
 
     if (!parsed.success) {
       return NextResponse.json(
-        { success: false, error: parsed.error.issues[0]?.message ?? "Invalid request" },
+        {
+          success: false,
+          error: parsed.error.issues[0]?.message ?? "Invalid request",
+        },
         { status: 400 }
       );
     }
 
     const { proxyId, lane } = parsed.data;
-    const db = adminDb();
 
-    const poolDoc = await db.collection("userPools").doc(poolId).get();
-    if (!poolDoc.exists) {
-      return NextResponse.json({ success: false, error: "Pool not found" }, { status: 404 });
+    const { data: pool } = await supabaseAdmin()
+      .from("user_pools")
+      .select("*")
+      .eq("id", poolId)
+      .maybeSingle();
+
+    if (!pool) {
+      return NextResponse.json(
+        { success: false, error: "Pool not found" },
+        { status: 404 }
+      );
     }
 
-    const pool = poolDoc.data()!;
-    const userId = pool.userId as string;
+    const userId = pool.user_id;
     const country = pool.country as Country;
-    const activeLimit = getActiveLimit(Number(pool.sizePerLane) || 3);
+    const activeLimit = getActiveLimit(Number(pool.size_per_lane) || 3);
     const backupLimit = getBackupLimit(
-      Number(pool.sizePerLane) || 3,
-      pool.backupLimit != null ? Number(pool.backupLimit) : null
+      Number(pool.size_per_lane) || 3,
+      pool.backup_limit != null ? Number(pool.backup_limit) : null
     );
 
-    const proxyDoc = await db.collection("proxies").doc(proxyId).get();
-    if (!proxyDoc.exists) {
-      return NextResponse.json({ success: false, error: "Proxy not found" }, { status: 404 });
+    const { data: proxy } = await supabaseAdmin()
+      .from("proxies")
+      .select("*")
+      .eq("id", proxyId)
+      .maybeSingle();
+
+    if (!proxy) {
+      return NextResponse.json(
+        { success: false, error: "Proxy not found" },
+        { status: 404 }
+      );
     }
 
-    const proxy = proxyDoc.data()!;
     if (proxy.country !== country) {
       return NextResponse.json(
         { success: false, error: `Proxy country must be ${country}` },
@@ -69,29 +85,25 @@ export async function POST(
       );
     }
 
-    const status = proxy.status as string;
-    if (status !== "fresh" && status !== "available") {
+    if (proxy.status !== "fresh" && proxy.status !== "available") {
       return NextResponse.json(
         { success: false, error: "Proxy must be fresh or available" },
         { status: 409 }
       );
     }
 
-    const assignedSnap = await db
-      .collection("proxies")
-      .where("assignedTo", "==", userId)
-      .get();
+    const { data: assignedSnap } = await supabaseAdmin()
+      .from("proxies")
+      .select("country, lane, restricted, status")
+      .eq("assigned_to", userId);
 
-    const assignedInCountry = assignedSnap.docs
-      .filter((d) => d.data().status === "assigned" && d.data().country === country)
-      .map((d) => {
-        const data = d.data();
-        return {
-          country: data.country as Country,
-          lane: data.lane as string | undefined,
-          restricted: Boolean(data.restricted),
-        };
-      });
+    const assignedInCountry = (assignedSnap ?? [])
+      .filter((d) => d.status === "assigned" && d.country === country)
+      .map((d) => ({
+        country: d.country as Country,
+        lane: d.lane ?? undefined,
+        restricted: Boolean(d.restricted),
+      }));
 
     let backupCount = 0;
     for (const p of assignedInCountry) {
@@ -122,15 +134,20 @@ export async function POST(
     }
 
     const now = new Date();
-    await proxyDoc.ref.update({
-      status: "assigned",
-      assignedTo: userId,
-      assignedAt: now,
-      lane,
-      stagingDone: false,
-      accountsCreated: false,
-      restricted: false,
-    });
+    const { error } = await supabaseAdmin()
+      .from("proxies")
+      .update({
+        status: "assigned",
+        assigned_to: userId,
+        assigned_at: now.toISOString(),
+        lane,
+        staging_done: false,
+        accounts_created: false,
+        restricted: false,
+      })
+      .eq("id", proxyId);
+
+    if (error) throw new Error(error.message);
 
     await writeAuditLog({
       actorUid: actor.uid,

@@ -1,20 +1,40 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
 
-export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   try {
     const actor = await requireAuth(["admin", "manager"]);
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
     const notes = typeof body?.notes === "string" ? body.notes : "";
 
-    const db = adminDb();
-    const doc = await db.collection("emails").doc(id).get();
-    if (!doc.exists) return NextResponse.json({ success: false, error: "Email not found" }, { status: 404 });
+    const { data: doc } = await supabaseAdmin()
+      .from("emails")
+      .select("id")
+      .eq("id", id)
+      .maybeSingle();
 
-    await doc.ref.update({ status: "flagged", notes: notes ? `[FLAGGED] ${notes}` : "[FLAGGED]" });
+    if (!doc) {
+      return NextResponse.json(
+        { success: false, error: "Email not found" },
+        { status: 404 }
+      );
+    }
+
+    const { error } = await supabaseAdmin()
+      .from("emails")
+      .update({
+        status: "flagged",
+        notes: notes ? `[FLAGGED] ${notes}` : "[FLAGGED]",
+      })
+      .eq("id", id);
+
+    if (error) throw new Error(error.message);
 
     await writeAuditLog({
       actorUid: actor.uid,

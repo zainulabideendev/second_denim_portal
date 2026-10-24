@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { adminDb } from "@/lib/firebase-admin";
-import { FieldValue } from "firebase-admin/firestore";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
 
@@ -23,48 +22,48 @@ export async function POST(request: NextRequest) {
 
     if (!parsed.success) {
       return NextResponse.json(
-        { success: false, error: parsed.error.issues[0]?.message ?? "Invalid data" },
+        {
+          success: false,
+          error: parsed.error.issues[0]?.message ?? "Invalid data",
+        },
         { status: 400 }
       );
     }
 
-    const db = adminDb();
-    const batchRef = db.collection("importBatches").doc();
-    const now = FieldValue.serverTimestamp();
+    const { data: batch, error: batchError } = await supabaseAdmin()
+      .from("import_batches")
+      .insert({
+        type: "email",
+        imported_by: actor.uid,
+        count: parsed.data.rows.length,
+        raw_file_name: "email-import",
+      })
+      .select("id")
+      .single();
 
-    // Write import batch metadata
-    await batchRef.set({
-      type: "email",
-      importedBy: actor.uid,
-      importedAt: now,
-      count: parsed.data.rows.length,
-      createdAt: now,
-    });
+    if (batchError || !batch) {
+      throw new Error(batchError?.message ?? "Failed to create import batch");
+    }
 
-    // Write emails in Firestore batches (max 500 per batch)
     const rows = parsed.data.rows;
-    const chunkSize = 490;
+    const chunkSize = 200;
     let imported = 0;
 
     for (let i = 0; i < rows.length; i += chunkSize) {
       const chunk = rows.slice(i, i + chunkSize);
-      const batch = db.batch();
-      for (const row of chunk) {
-        const ref = db.collection("emails").doc();
-        batch.set(ref, {
+      const { error } = await supabaseAdmin().from("emails").insert(
+        chunk.map((row) => ({
           email: row.email,
           password: row.password,
-          status: "fresh",
-          assignedTo: null,
-          assignedAt: null,
+          status: "fresh" as const,
+          assigned_to: null,
+          assigned_at: null,
           notes: row.notes ?? "",
-          batchId: batchRef.id,
-          syncedProxyId: null,
-          syncedAt: null,
-          createdAt: now,
-        });
-      }
-      await batch.commit();
+          synced_proxy_id: null,
+          synced_at: null,
+        }))
+      );
+      if (error) throw new Error(error.message);
       imported += chunk.length;
     }
 
@@ -72,13 +71,13 @@ export async function POST(request: NextRequest) {
       actorUid: actor.uid,
       action: "email.imported",
       targetType: "user",
-      targetId: batchRef.id,
-      metadata: { count: imported, batchId: batchRef.id },
+      targetId: batch.id,
+      metadata: { count: imported, batchId: batch.id },
     });
 
     return NextResponse.json({
       success: true,
-      data: { imported, batchId: batchRef.id },
+      data: { imported, batchId: batch.id },
     });
   } catch (err) {
     return handleAuthError(err);

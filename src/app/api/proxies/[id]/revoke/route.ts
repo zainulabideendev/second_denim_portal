@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
 
@@ -20,28 +20,35 @@ export async function POST(
     const parsed = revokeSchema.safeParse(body);
     const retire = parsed.success ? parsed.data.retire : false;
 
-    const db = adminDb();
-    const proxyDoc = await db.collection("proxies").doc(id).get();
+    const { data: previousData } = await supabaseAdmin()
+      .from("proxies")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
 
-    if (!proxyDoc.exists) {
+    if (!previousData) {
       return NextResponse.json(
         { success: false, error: "Proxy not found" },
         { status: 404 }
       );
     }
 
-    const previousData = proxyDoc.data()!;
     const newStatus = retire ? "retired" : "fresh";
 
-    await proxyDoc.ref.update({
-      status: newStatus,
-      assignedTo: null,
-      assignedAt: null,
-      lane: null,
-      stagingDone: false,
-      accountsCreated: false,
-      restricted: false,
-    });
+    const { error } = await supabaseAdmin()
+      .from("proxies")
+      .update({
+        status: newStatus,
+        assigned_to: null,
+        assigned_at: null,
+        lane: null,
+        staging_done: false,
+        accounts_created: false,
+        restricted: false,
+      })
+      .eq("id", id);
+
+    if (error) throw new Error(error.message);
 
     await writeAuditLog({
       actorUid: actor.uid,
@@ -49,7 +56,7 @@ export async function POST(
       targetType: "proxy",
       targetId: id,
       metadata: {
-        previousAssignedTo: previousData.assignedTo,
+        previousAssignedTo: previousData.assigned_to,
         newStatus,
       },
     });

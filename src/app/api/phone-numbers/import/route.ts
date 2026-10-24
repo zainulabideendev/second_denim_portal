@@ -1,16 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
-import { FieldValue } from "firebase-admin/firestore";
 
 const phoneRowSchema = z.object({
   number: z.string().min(1),
   country: z.enum(["FR", "BE", "UK", "DE"]),
   provider: z.string().min(1),
-  purchasedAt: z.string().datetime({ offset: true }).or(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)),
-  expiresAt: z.string().datetime({ offset: true }).or(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)),
+  purchasedAt: z
+    .string()
+    .datetime({ offset: true })
+    .or(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)),
+  expiresAt: z
+    .string()
+    .datetime({ offset: true })
+    .or(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)),
   notes: z.string().optional().default(""),
 });
 
@@ -34,42 +39,45 @@ export async function POST(request: NextRequest) {
     }
 
     const { rows, rawFileName } = parsed.data;
-    const db = adminDb();
 
-    const batchRef = db.collection("importBatches").doc();
-    const batchId = batchRef.id;
+    const { data: batch, error: batchError } = await supabaseAdmin()
+      .from("import_batches")
+      .insert({
+        type: "phone",
+        imported_by: actor.uid,
+        count: rows.length,
+        raw_file_name: rawFileName,
+      })
+      .select("id")
+      .single();
 
-    const writeBatch = db.batch();
-
-    writeBatch.set(batchRef, {
-      type: "phone",
-      importedBy: actor.uid,
-      importedAt: FieldValue.serverTimestamp(),
-      count: rows.length,
-      rawFileName,
-      createdAt: FieldValue.serverTimestamp(),
-    });
-
-    const phoneIds: string[] = [];
-    for (const row of rows) {
-      const phoneRef = db.collection("phoneNumbers").doc();
-      phoneIds.push(phoneRef.id);
-      writeBatch.set(phoneRef, {
-        country: row.country,
-        number: row.number,
-        provider: row.provider,
-        purchasedAt: new Date(row.purchasedAt),
-        expiresAt: new Date(row.expiresAt),
-        status: "available",
-        assignedTo: null,
-        assignedAt: null,
-        batchId,
-        notes: row.notes ?? "",
-        createdAt: FieldValue.serverTimestamp(),
-      });
+    if (batchError || !batch) {
+      throw new Error(batchError?.message ?? "Failed to create import batch");
     }
 
-    await writeBatch.commit();
+    const batchId = batch.id;
+
+    const { data: phones, error: insertError } = await supabaseAdmin()
+      .from("phone_numbers")
+      .insert(
+        rows.map((row) => ({
+          country: row.country,
+          number: row.number,
+          provider: row.provider,
+          purchased_at: new Date(row.purchasedAt).toISOString(),
+          expires_at: new Date(row.expiresAt).toISOString(),
+          status: "available" as const,
+          assigned_to: null,
+          assigned_at: null,
+          batch_id: batchId,
+          notes: row.notes ?? "",
+        }))
+      )
+      .select("id");
+
+    if (insertError) throw new Error(insertError.message);
+
+    const phoneIds = (phones ?? []).map((p) => p.id);
 
     await writeAuditLog({
       actorUid: actor.uid,

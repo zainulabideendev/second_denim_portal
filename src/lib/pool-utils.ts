@@ -31,7 +31,7 @@ export function getTotalPoolSlots(
 }
 
 /** Map legacy lane values to the current backup/active model. */
-export function normalizeLane(lane?: string): ProxyLane {
+export function normalizeLane(lane?: string | null): ProxyLane {
   if (lane === "active") return "active";
   return "backup";
 }

@@ -1,79 +1,72 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
-import { toIso } from "@/lib/utils-server";
 
 export async function GET(request: NextRequest) {
   try {
-    const actor = await requireAuth(["admin", "manager"]);
-    void actor;
+    await requireAuth(["admin", "manager"]);
 
-    const db = adminDb();
     const { searchParams } = new URL(request.url);
     const status = searchParams.get("status");
     const type = searchParams.get("type");
 
-    let snapshot: FirebaseFirestore.QuerySnapshot;
-    if (status) {
-      snapshot = await db
-        .collection("requests")
-        .where("status", "==", status)
-        .limit(150)
-        .get();
-    } else {
-      snapshot = await db.collection("requests").limit(150).get();
-    }
+    let query = supabaseAdmin().from("requests").select("*").limit(150);
+    if (status)
+      query = query.eq(
+        "status",
+        status as "pending" | "approved" | "rejected" | "fulfilled"
+      );
+
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
 
     const missingUids = new Set<string>();
-    snapshot.docs.forEach((doc) => {
-      const d = doc.data();
-      if (!d.requestedByName && d.requestedBy) missingUids.add(d.requestedBy);
-      if (d.reviewedBy && !d.reviewedByName) missingUids.add(d.reviewedBy);
+    (data ?? []).forEach((d) => {
+      if (!d.requested_by_name && d.requested_by) missingUids.add(d.requested_by);
+      if (d.reviewed_by && !d.reviewed_by_name) missingUids.add(d.reviewed_by);
     });
 
-    const userDocs = missingUids.size
-      ? await Promise.all(
-          Array.from(missingUids).map((uid) =>
-            db.collection("users").doc(uid).get()
-          )
-        )
-      : [];
+    const { data: profiles } = missingUids.size
+      ? await supabaseAdmin()
+          .from("profiles")
+          .select("id, name, email")
+          .in("id", Array.from(missingUids))
+      : { data: [] as { id: string; name: string; email: string }[] };
+
     const userMap = new Map(
-      userDocs.map((doc) => [doc.id, doc.exists ? doc.data() : null])
+      (profiles ?? []).map((p) => [p.id, { name: p.name, email: p.email }])
     );
 
-    let requests = snapshot.docs.map((doc) => {
-      const d = doc.data();
-      const reqUser = d.requestedByName
-        ? { name: d.requestedByName, email: d.requestedByEmail ?? "" }
-        : userMap.get(d.requestedBy);
-      const revUser = d.reviewedBy
-        ? d.reviewedByName
-          ? { name: d.reviewedByName, email: d.reviewedByEmail ?? "" }
-          : userMap.get(d.reviewedBy)
+    let requests = (data ?? []).map((d) => {
+      const reqUser = d.requested_by_name
+        ? { name: d.requested_by_name, email: d.requested_by_email ?? "" }
+        : userMap.get(d.requested_by);
+      const revUser = d.reviewed_by
+        ? d.reviewed_by_name
+          ? { name: d.reviewed_by_name, email: d.reviewed_by_email ?? "" }
+          : userMap.get(d.reviewed_by)
         : null;
       return {
-        id: doc.id,
+        id: d.id,
         type: d.type,
-        requestedBy: d.requestedBy,
+        requestedBy: d.requested_by,
         requestedByUser: reqUser
-          ? { uid: d.requestedBy, name: reqUser.name, email: reqUser.email }
+          ? { uid: d.requested_by, name: reqUser.name, email: reqUser.email }
           : null,
         country: d.country,
         reason: d.reason,
         status: d.status,
-        reviewedBy: d.reviewedBy ?? null,
+        reviewedBy: d.reviewed_by ?? null,
         reviewedByUser: revUser
-          ? { uid: d.reviewedBy, name: revUser.name, email: revUser.email }
+          ? { uid: d.reviewed_by!, name: revUser.name, email: revUser.email }
           : null,
-        reviewedAt: d.reviewedAt ? toIso(d.reviewedAt) : null,
-        fulfilledItemId: d.fulfilledItemId ?? null,
-        createdAt: toIso(d.createdAt),
+        reviewedAt: d.reviewed_at ?? null,
+        fulfilledItemId: d.fulfilled_item_id ?? null,
+        createdAt: d.created_at,
       };
     });
 
     if (type) requests = requests.filter((r) => r.type === type);
-
     requests.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
     return NextResponse.json({ success: true, data: requests });

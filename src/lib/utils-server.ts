@@ -1,11 +1,9 @@
-import { adminDb } from "@/lib/firebase-admin";
-import { FieldValue } from "firebase-admin/firestore";
+import { supabaseAdmin } from "@/lib/supabase-admin";
+import { mapPhone, toIso } from "@/lib/mappers";
 import type { Country, PhoneNumber } from "@/lib/types";
 import { writeAuditLog } from "@/lib/audit";
 
-// ─── Ban cascade ─────────────────────────────────────────────────────────────
-// Triggered when a salesman reports a ban on an active proxy.
-// Flags the banned proxy only — admin assigns a replacement manually.
+export { toIso };
 
 export async function handleBanCascade(
   bannedProxyId: string,
@@ -16,98 +14,74 @@ export async function handleBanCascade(
   _activePoolSize?: number,
   _backupLimit?: number | null
 ): Promise<{ promoted: string[]; refilled: boolean }> {
-  const db = adminDb();
-
-  await db.collection("proxies").doc(bannedProxyId).update({
-    status: "flagged",
-    lane: "active",
-    notes: notes ? `[BANNED] ${notes}` : "[BANNED] Account got banned",
-  });
+  await supabaseAdmin()
+    .from("proxies")
+    .update({
+      status: "flagged",
+      lane: "active",
+      notes: notes ? `[BANNED] ${notes}` : "[BANNED] Account got banned",
+    })
+    .eq("id", bannedProxyId);
 
   return { promoted: [], refilled: false };
 }
-
-// ─── FIFO phone assignment ────────────────────────────────────────────────────
 
 export async function assignAvailablePhone(
   country: Country,
   assignedTo: string,
   actorUid: string
 ): Promise<PhoneNumber | null> {
-  const db = adminDb();
+  const { data: availableOnly } = await supabaseAdmin()
+    .from("phone_numbers")
+    .select("*")
+    .eq("country", country)
+    .eq("status", "available")
+    .order("purchased_at", { ascending: true })
+    .limit(1);
 
-  const snapshot = await db
-    .collection("phoneNumbers")
-    .where("country", "==", country)
-    .limit(50)
-    .get();
+  if (!availableOnly?.length) return null;
 
-  const available = snapshot.docs
-    .filter((d) => {
-      const status = d.data().status;
-      return status === "fresh" || status === "available";
-    })
-    .sort((a, b) => {
-      const aAt = a.data().purchasedAt?.toDate?.() ?? new Date(a.data().purchasedAt);
-      const bAt = b.data().purchasedAt?.toDate?.() ?? new Date(b.data().purchasedAt);
-      return aAt.getTime() - bAt.getTime();
-    });
+  const row = availableOnly[0];
+  const now = new Date().toISOString();
+  const { data: updated, error } = await supabaseAdmin()
+    .from("phone_numbers")
+    .update({ status: "active", assigned_to: assignedTo, assigned_at: now })
+    .eq("id", row.id)
+    .select("*")
+    .single();
 
-  if (available.length === 0) return null;
-
-  const doc = available[0];
-  const now = new Date();
-
-  await doc.ref.update({
-    status: "active",
-    assignedTo,
-    assignedAt: now,
-  });
+  if (error || !updated) return null;
 
   await writeAuditLog({
     actorUid,
     action: "phone.assigned",
     targetType: "phone",
-    targetId: doc.id,
+    targetId: updated.id,
     metadata: { assignedTo, country },
   });
 
-  return { id: doc.id, ...doc.data() } as PhoneNumber;
+  return mapPhone(updated);
 }
 
-// ─── Count active proxies for a user ─────────────────────────────────────────
-
 export async function countActiveProxies(uid: string): Promise<number> {
-  const db = adminDb();
-  const snap = await db
-    .collection("proxies")
-    .where("assignedTo", "==", uid)
-    .where("status", "==", "assigned")
-    .count()
-    .get();
-  return snap.data().count;
+  const { count, error } = await supabaseAdmin()
+    .from("proxies")
+    .select("*", { count: "exact", head: true })
+    .eq("assigned_to", uid)
+    .eq("status", "assigned");
+  if (error) return 0;
+  return count ?? 0;
 }
 
 export async function countActivePhones(uid: string): Promise<number> {
-  const db = adminDb();
-  const snap = await db.collection("phoneNumbers").where("assignedTo", "==", uid).get();
-  return snap.docs.filter((d) => {
-    const status = d.data().status;
-    return status === "active" || status === "assigned";
-  }).length;
+  const { count, error } = await supabaseAdmin()
+    .from("phone_numbers")
+    .select("*", { count: "exact", head: true })
+    .eq("assigned_to", uid)
+    .in("status", ["active", "assigned"]);
+  if (error) return 0;
+  return count ?? 0;
 }
-
-// ─── Firestore timestamp to ISO string ───────────────────────────────────────
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function toIso(val: any): string {
-  if (!val) return new Date().toISOString();
-  if (typeof val.toDate === "function") return val.toDate().toISOString();
-  if (val instanceof Date) return val.toISOString();
-  return String(val);
-}
-
-// ─── Notify (write in-app notification) ──────────────────────────────────────
 
 export async function createNotification({
   uid,
@@ -120,18 +94,14 @@ export async function createNotification({
   message: string;
   relatedId?: string;
 }) {
-  const db = adminDb();
-  await db.collection("notifications").add({
+  await supabaseAdmin().from("notifications").insert({
     uid,
     type,
     message,
     read: false,
-    createdAt: FieldValue.serverTimestamp(),
-    ...(relatedId ? { relatedId } : {}),
+    related_id: relatedId ?? null,
   });
 }
-
-// ─── Notify all managers/admins ──────────────────────────────────────────────
 
 export async function notifyManagers({
   type,
@@ -142,25 +112,21 @@ export async function notifyManagers({
   message: string;
   relatedId?: string;
 }) {
-  const db = adminDb();
-  const managers = await db
-    .collection("users")
-    .where("role", "in", ["manager", "admin"])
-    .where("status", "==", "active")
-    .get();
+  const { data: managers } = await supabaseAdmin()
+    .from("profiles")
+    .select("id")
+    .in("role", ["manager", "admin"])
+    .eq("status", "active");
 
-  const batch = db.batch();
-  managers.forEach((doc) => {
-    const ref = db.collection("notifications").doc();
-    batch.set(ref, {
-      uid: doc.id,
+  if (!managers?.length) return;
+
+  await supabaseAdmin().from("notifications").insert(
+    managers.map((m) => ({
+      uid: m.id,
       type,
       message,
       read: false,
-      createdAt: FieldValue.serverTimestamp(),
-      ...(relatedId ? { relatedId } : {}),
-    });
-  });
-
-  await batch.commit();
+      related_id: relatedId ?? null,
+    }))
+  );
 }

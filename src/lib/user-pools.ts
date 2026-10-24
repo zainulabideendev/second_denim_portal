@@ -1,5 +1,4 @@
-import { adminDb } from "@/lib/firebase-admin";
-import { FieldValue } from "firebase-admin/firestore";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import type { Country, UserCountryPool, UserCountryPoolRow } from "@/lib/types";
 import { type ProxyLane } from "@/lib/types";
 import {
@@ -7,41 +6,58 @@ import {
   getTotalPoolSlots,
   normalizeLane,
 } from "@/lib/pool-utils";
-import { toIso } from "@/lib/utils-server";
+import { invalidateUserCache } from "@/lib/auth";
 
-const COLLECTION = "userPools";
-
-function mapDoc(
-  doc: FirebaseFirestore.QueryDocumentSnapshot
-): UserCountryPool {
-  const d = doc.data();
+function mapRow(row: {
+  id: string;
+  user_id: string;
+  user_name: string;
+  user_email: string;
+  country: Country;
+  size_per_lane: number;
+  backup_limit: number | null;
+  created_at: string;
+  created_by: string | null;
+}): UserCountryPool {
   return {
-    id: doc.id,
-    userId: d.userId,
-    userName: d.userName,
-    userEmail: d.userEmail,
-    country: d.country,
-    sizePerLane: d.sizePerLane,
+    id: row.id,
+    userId: row.user_id,
+    userName: row.user_name,
+    userEmail: row.user_email,
+    country: row.country,
+    sizePerLane: row.size_per_lane,
     backupLimit:
-      d.backupLimit != null ? Number(d.backupLimit) : getBackupLimit(d.sizePerLane),
-    createdAt: toIso(d.createdAt),
-    createdBy: d.createdBy,
+      row.backup_limit != null
+        ? Number(row.backup_limit)
+        : getBackupLimit(row.size_per_lane),
+    createdAt: row.created_at,
+    createdBy: row.created_by ?? "",
   };
 }
 
 export async function getUserPoolAssignments(
   userId: string
 ): Promise<UserCountryPool[]> {
-  const db = adminDb();
-  const snap = await db.collection(COLLECTION).where("userId", "==", userId).get();
-  return snap.docs.map(mapDoc).sort((a, b) => a.country.localeCompare(b.country));
+  const { data, error } = await supabaseAdmin()
+    .from("user_pools")
+    .select("*")
+    .eq("user_id", userId);
+
+  if (error || !data) return [];
+  return data
+    .map(mapRow)
+    .sort((a, b) => a.country.localeCompare(b.country));
 }
 
 export async function getAllUserPoolAssignments(): Promise<UserCountryPool[]> {
-  const db = adminDb();
-  const snap = await db.collection(COLLECTION).limit(500).get();
-  return snap.docs
-    .map(mapDoc)
+  const { data, error } = await supabaseAdmin()
+    .from("user_pools")
+    .select("*")
+    .limit(500);
+
+  if (error || !data) return [];
+  return data
+    .map(mapRow)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
@@ -53,13 +69,15 @@ export async function syncUserPoolMeta(userId: string): Promise<void> {
     0
   );
 
-  await adminDb()
-    .collection("users")
-    .doc(userId)
+  await supabaseAdmin()
+    .from("profiles")
     .update({
-      poolCountries,
-      activeProxyLimit: activeProxyLimit || 0,
-    });
+      pool_countries: poolCountries,
+      active_proxy_limit: activeProxyLimit || 0,
+    })
+    .eq("id", userId);
+
+  invalidateUserCache(userId);
 }
 
 export async function enrichPoolRows(
@@ -67,42 +85,43 @@ export async function enrichPoolRows(
 ): Promise<UserCountryPoolRow[]> {
   if (!assignments.length) return [];
 
-  const db = adminDb();
   const userIds = new Set(assignments.map((a) => a.userId));
-  const assignedSnap = await db
-    .collection("proxies")
-    .where("status", "==", "assigned")
-    .limit(500)
-    .get();
+  const { data: assigned } = await supabaseAdmin()
+    .from("proxies")
+    .select("assigned_to, country, lane, status")
+    .eq("status", "assigned")
+    .limit(500);
 
-  const proxiesByUser = new Map<string, FirebaseFirestore.QueryDocumentSnapshot[]>();
-  assignedSnap.docs.forEach((doc) => {
-    const uid = doc.data().assignedTo as string | undefined;
+  const proxiesByUser = new Map<
+    string,
+    Array<{ country: string; lane: string | null }>
+  >();
+
+  (assigned ?? []).forEach((doc) => {
+    const uid = doc.assigned_to;
     if (!uid || !userIds.has(uid)) return;
-    const list = proxiesByUser.get(uid);
-    if (list) list.push(doc);
-    else proxiesByUser.set(uid, [doc]);
+    const list = proxiesByUser.get(uid) ?? [];
+    list.push({ country: doc.country, lane: doc.lane });
+    proxiesByUser.set(uid, list);
   });
 
   return assignments.map((assignment) => {
     const docs =
-      proxiesByUser.get(assignment.userId)?.filter(
-        (d) =>
-          d.data().status === "assigned" &&
-          d.data().country === assignment.country
-      ) ?? [];
+      proxiesByUser
+        .get(assignment.userId)
+        ?.filter((d) => d.country === assignment.country) ?? [];
 
-    const byLane: Record<ProxyLane, number> = {
-      backup: 0,
-      active: 0,
-    };
+    const byLane: Record<ProxyLane, number> = { backup: 0, active: 0 };
     docs.forEach((d) => {
-      const lane = normalizeLane(d.data().lane);
+      const lane = normalizeLane(d.lane);
       byLane[lane]++;
     });
 
     const filled = byLane.backup + byLane.active;
-    const total = getTotalPoolSlots(assignment.sizePerLane, assignment.backupLimit);
+    const total = getTotalPoolSlots(
+      assignment.sizePerLane,
+      assignment.backupLimit
+    );
 
     return { ...assignment, filled, total, byLane };
   });
@@ -123,17 +142,12 @@ export async function createUserCountryPools(
   input: CreatePoolsInput
 ): Promise<{ created: number }> {
   const { userIds, countrySizes, actorUid, usersById } = input;
-  const db = adminDb();
-
   const conflicts: string[] = [];
   const existingByUser = new Map<string, Set<Country>>();
 
   for (const userId of userIds) {
-    const snap = await db.collection(COLLECTION).where("userId", "==", userId).get();
-    existingByUser.set(
-      userId,
-      new Set(snap.docs.map((d) => d.data().country as Country))
-    );
+    const existing = await getUserPoolAssignments(userId);
+    existingByUser.set(userId, new Set(existing.map((a) => a.country)));
   }
 
   for (const userId of userIds) {
@@ -145,9 +159,7 @@ export async function createUserCountryPools(
     const existing = existingByUser.get(userId) ?? new Set();
     for (const { country } of countrySizes) {
       if (existing.has(country)) {
-        conflicts.push(
-          `${user.name} already has a ${country} pool`
-        );
+        conflicts.push(`${user.name} already has a ${country} pool`);
       }
     }
   }
@@ -156,27 +168,31 @@ export async function createUserCountryPools(
     throw new Error(conflicts.join(". "));
   }
 
-  const now = FieldValue.serverTimestamp();
   let created = 0;
+  const rows = [];
 
   for (const userId of userIds) {
     const user = usersById.get(userId)!;
-
     for (const { country, sizePerLane, backupLimit } of countrySizes) {
-      const ref = db.collection(COLLECTION).doc();
-      await ref.set({
-        userId,
-        userName: user.name,
-        userEmail: user.email,
+      rows.push({
+        user_id: userId,
+        user_name: user.name,
+        user_email: user.email,
         country,
-        sizePerLane,
-        backupLimit,
-        createdAt: now,
-        createdBy: actorUid,
+        size_per_lane: sizePerLane,
+        backup_limit: backupLimit,
+        created_by: actorUid,
       });
       created++;
     }
+  }
 
+  if (rows.length) {
+    const { error } = await supabaseAdmin().from("user_pools").insert(rows);
+    if (error) throw new Error(error.message);
+  }
+
+  for (const userId of userIds) {
     await syncUserPoolMeta(userId);
   }
 

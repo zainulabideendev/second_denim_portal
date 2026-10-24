@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
 import { toIso } from "@/lib/utils-server";
@@ -8,7 +8,10 @@ import { normalizeLane } from "@/lib/pool-utils";
 
 const assignSchema = z.object({
   assignedTo: z.string().min(1, "User ID is required"),
-  lane: z.enum(["backup", "active", "fresh", "staging"]).optional().default("backup"),
+  lane: z
+    .enum(["backup", "active", "fresh", "staging"])
+    .optional()
+    .default("backup"),
 });
 
 export async function POST(
@@ -31,38 +34,49 @@ export async function POST(
 
     const { assignedTo, lane: rawLane } = parsed.data;
     const lane = normalizeLane(rawLane);
-    const db = adminDb();
 
-    // Verify proxy exists
-    const proxyDoc = await db.collection("proxies").doc(id).get();
-    if (!proxyDoc.exists) {
+    const { data: proxyDoc } = await supabaseAdmin()
+      .from("proxies")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (!proxyDoc) {
       return NextResponse.json(
         { success: false, error: "Proxy not found" },
         { status: 404 }
       );
     }
 
-    // Verify target user exists
-    const userDoc = await db.collection("users").doc(assignedTo).get();
-    if (!userDoc.exists) {
+    const { data: userDoc } = await supabaseAdmin()
+      .from("profiles")
+      .select("id")
+      .eq("id", assignedTo)
+      .maybeSingle();
+
+    if (!userDoc) {
       return NextResponse.json(
         { success: false, error: "Target user not found" },
         { status: 404 }
       );
     }
 
-    const previousData = proxyDoc.data()!;
     const now = new Date();
 
-    await proxyDoc.ref.update({
-      status: "assigned",
-      assignedTo,
-      assignedAt: now,
-      lane,
-      stagingDone: false,
-      accountsCreated: false,
-      restricted: false,
-    });
+    const { error } = await supabaseAdmin()
+      .from("proxies")
+      .update({
+        status: "assigned",
+        assigned_to: assignedTo,
+        assigned_at: now.toISOString(),
+        lane,
+        staging_done: false,
+        accounts_created: false,
+        restricted: false,
+      })
+      .eq("id", id);
+
+    if (error) throw new Error(error.message);
 
     await writeAuditLog({
       actorUid: actor.uid,
@@ -72,7 +86,7 @@ export async function POST(
       metadata: {
         assignedTo,
         lane,
-        previousAssignedTo: previousData.assignedTo,
+        previousAssignedTo: proxyDoc.assigned_to,
         manualOverride: true,
       },
     });

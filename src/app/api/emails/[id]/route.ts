@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
 import { mapEmailDoc, enrichEmailsWithSyncedProxies } from "@/lib/sync-enrich";
+import type { Database } from "@/lib/database.types";
 
 const updateSchema = z.object({
   email: z.string().email("Invalid email address").optional(),
@@ -22,33 +23,44 @@ export async function PATCH(
 
     if (!parsed.success) {
       return NextResponse.json(
-        { success: false, error: parsed.error.issues[0]?.message ?? "Invalid data" },
+        {
+          success: false,
+          error: parsed.error.issues[0]?.message ?? "Invalid data",
+        },
         { status: 400 }
       );
     }
 
-    const db = adminDb();
-    const emailRef = db.collection("emails").doc(id);
-    const emailDoc = await emailRef.get();
+    const { data: current } = await supabaseAdmin()
+      .from("emails")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
 
-    if (!emailDoc.exists) {
-      return NextResponse.json({ success: false, error: "Email not found" }, { status: 404 });
+    if (!current) {
+      return NextResponse.json(
+        { success: false, error: "Email not found" },
+        { status: 404 }
+      );
     }
 
-    const current = emailDoc.data()!;
-    const updates: Record<string, string> = {};
+    const updates: Database["public"]["Tables"]["emails"]["Update"] = {};
 
     if (parsed.data.email !== undefined) {
       const emailNorm = parsed.data.email.trim().toLowerCase();
       if (emailNorm !== String(current.email ?? "").toLowerCase()) {
-        const existing = await db
-          .collection("emails")
-          .where("email", "==", emailNorm)
-          .limit(1)
-          .get();
-        if (!existing.empty && existing.docs[0].id !== id) {
+        const { data: existing } = await supabaseAdmin()
+          .from("emails")
+          .select("id")
+          .eq("email", emailNorm)
+          .limit(1);
+
+        if (existing?.length && existing[0].id !== id) {
           return NextResponse.json(
-            { success: false, error: "This email already exists in inventory" },
+            {
+              success: false,
+              error: "This email already exists in inventory",
+            },
             { status: 409 }
           );
         }
@@ -65,19 +77,28 @@ export async function PATCH(
     }
 
     if (Object.keys(updates).length === 0) {
-      return NextResponse.json({ success: false, error: "No changes" }, { status: 400 });
+      return NextResponse.json(
+        { success: false, error: "No changes" },
+        { status: 400 }
+      );
     }
 
-    await emailRef.update(updates);
+    const { error } = await supabaseAdmin()
+      .from("emails")
+      .update(updates)
+      .eq("id", id);
 
-    // Keep denormalized snapshot on linked proxy in sync
-    const linkedProxyId =
-      current.syncedProxyId != null ? String(current.syncedProxyId).trim() : "";
+    if (error) throw new Error(error.message);
+
+    const linkedProxyId = current.synced_proxy_id?.trim() ?? "";
     if (linkedProxyId && (updates.email || updates.password)) {
-      const proxyPatch: Record<string, string> = {};
-      if (updates.email) proxyPatch.syncedEmailEmail = updates.email;
-      if (updates.password) proxyPatch.syncedEmailPassword = updates.password;
-      await db.collection("proxies").doc(linkedProxyId).update(proxyPatch);
+      const proxyPatch: Database["public"]["Tables"]["proxies"]["Update"] = {};
+      if (updates.email) proxyPatch.synced_email_email = updates.email;
+      if (updates.password) proxyPatch.synced_email_password = updates.password;
+      await supabaseAdmin()
+        .from("proxies")
+        .update(proxyPatch)
+        .eq("id", linkedProxyId);
     }
 
     await writeAuditLog({
@@ -92,8 +113,15 @@ export async function PATCH(
       },
     });
 
-    const next = await emailRef.get();
-    const [enriched] = await enrichEmailsWithSyncedProxies([mapEmailDoc(next)]);
+    const { data: next } = await supabaseAdmin()
+      .from("emails")
+      .select("*")
+      .eq("id", id)
+      .single();
+
+    const [enriched] = await enrichEmailsWithSyncedProxies([
+      mapEmailDoc(next!),
+    ]);
 
     return NextResponse.json({ success: true, data: enriched });
   } catch (err) {

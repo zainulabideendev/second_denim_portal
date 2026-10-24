@@ -1,5 +1,5 @@
-import { adminDb } from "@/lib/firebase-admin";
-import { FieldValue } from "firebase-admin/firestore";
+import { supabaseAdmin } from "@/lib/supabase-admin";
+import type { Json } from "@/lib/database.types";
 import type { Country, PoolConfig, ProxyLane } from "@/lib/types";
 import {
   COUNTRIES,
@@ -7,9 +7,6 @@ import {
   MAX_POOL_COUNTRIES,
 } from "@/lib/types";
 import { getBackupLimit, getTotalPoolSlots } from "@/lib/pool-utils";
-import { toIso } from "@/lib/utils-server";
-
-const CONFIG_DOC = "settings/poolConfig";
 
 export function getSizePerLaneForCountry(
   country: Country,
@@ -41,27 +38,35 @@ export function resolveUserPoolCountries(data: {
 }
 
 export async function getPoolConfig(): Promise<PoolConfig> {
-  const db = adminDb();
-  const doc = await db.doc(CONFIG_DOC).get();
+  const { data } = await supabaseAdmin()
+    .from("pool_config")
+    .select("*")
+    .eq("id", "default")
+    .maybeSingle();
 
-  if (!doc.exists) {
+  if (!data) {
     return { ...DEFAULT_POOL_CONFIG };
   }
 
-  const d = doc.data()!;
+  const rawByCountry =
+    data.by_country && typeof data.by_country === "object"
+      ? (data.by_country as Record<string, { sizePerLane?: number }>)
+      : {};
+
   const byCountry = { ...DEFAULT_POOL_CONFIG.byCountry };
   for (const country of COUNTRIES) {
-    const size = d.byCountry?.[country]?.sizePerLane;
+    const size = rawByCountry[country]?.sizePerLane;
     if (typeof size === "number" && size > 0) {
       byCountry[country] = { sizePerLane: size };
     }
   }
 
   return {
-    defaultSizePerLane: d.defaultSizePerLane ?? DEFAULT_POOL_CONFIG.defaultSizePerLane,
+    defaultSizePerLane:
+      data.default_size_per_lane ?? DEFAULT_POOL_CONFIG.defaultSizePerLane,
     byCountry,
-    updatedAt: d.updatedAt ? toIso(d.updatedAt) : undefined,
-    updatedBy: d.updatedBy ?? undefined,
+    updatedAt: data.updated_at ?? undefined,
+    updatedBy: data.updated_by ?? undefined,
   };
 }
 
@@ -69,15 +74,15 @@ export async function savePoolConfig(
   config: Pick<PoolConfig, "defaultSizePerLane" | "byCountry">,
   actorUid: string
 ): Promise<PoolConfig> {
-  const db = adminDb();
-  const payload = {
-    defaultSizePerLane: config.defaultSizePerLane,
-    byCountry: config.byCountry,
-    updatedAt: FieldValue.serverTimestamp(),
-    updatedBy: actorUid,
-  };
+  const { error } = await supabaseAdmin().from("pool_config").upsert({
+    id: "default",
+    default_size_per_lane: config.defaultSizePerLane,
+    by_country: config.byCountry as unknown as Json,
+    updated_at: new Date().toISOString(),
+    updated_by: actorUid,
+  });
 
-  await db.doc(CONFIG_DOC).set(payload, { merge: true });
+  if (error) throw new Error(error.message);
   return getPoolConfig();
 }
 

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
 import { syncUserPoolMeta } from "@/lib/user-pools";
@@ -25,7 +25,10 @@ export async function PATCH(
 
     if (!parsed.success) {
       return NextResponse.json(
-        { success: false, error: parsed.error.issues[0]?.message ?? "Invalid request" },
+        {
+          success: false,
+          error: parsed.error.issues[0]?.message ?? "Invalid request",
+        },
         { status: 400 }
       );
     }
@@ -37,53 +40,63 @@ export async function PATCH(
       );
     }
 
-    const db = adminDb();
-    const poolRef = db.collection("userPools").doc(id);
-    const poolDoc = await poolRef.get();
+    const { data: current } = await supabaseAdmin()
+      .from("user_pools")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
 
-    if (!poolDoc.exists) {
-      return NextResponse.json({ success: false, error: "Pool not found" }, { status: 404 });
+    if (!current) {
+      return NextResponse.json(
+        { success: false, error: "Pool not found" },
+        { status: 404 }
+      );
     }
 
-    const current = poolDoc.data()!;
-    const nextUserId = parsed.data.userId ?? (current.userId as string);
+    const nextUserId = parsed.data.userId ?? current.user_id;
     const nextCountry = (parsed.data.country ?? current.country) as Country;
-    const nextActive = parsed.data.sizePerLane ?? (current.sizePerLane as number);
+    const nextActive = parsed.data.sizePerLane ?? current.size_per_lane;
     const nextBackup =
       parsed.data.backupLimit ??
-      (current.backupLimit != null ? Number(current.backupLimit) : nextActive * 2);
+      (current.backup_limit != null
+        ? Number(current.backup_limit)
+        : nextActive * 2);
 
-    const userChanged = nextUserId !== current.userId;
+    const userChanged = nextUserId !== current.user_id;
     const countryChanged = nextCountry !== current.country;
 
-    // Load target user when needed
-    let userName = current.userName as string;
-    let userEmail = current.userEmail as string;
+    let userName = current.user_name;
+    let userEmail = current.user_email;
 
     if (userChanged || countryChanged) {
-      const userDoc = await db.collection("users").doc(nextUserId).get();
-      if (!userDoc.exists) {
-        return NextResponse.json({ success: false, error: "User not found" }, { status: 404 });
+      const { data: userDoc } = await supabaseAdmin()
+        .from("profiles")
+        .select("*")
+        .eq("id", nextUserId)
+        .maybeSingle();
+
+      if (!userDoc) {
+        return NextResponse.json(
+          { success: false, error: "User not found" },
+          { status: 404 }
+        );
       }
-      const u = userDoc.data()!;
-      if (u.role !== "salesman") {
+      if (userDoc.role !== "salesman") {
         return NextResponse.json(
           { success: false, error: "Pools can only be assigned to salesmen" },
           { status: 400 }
         );
       }
-      userName = u.name;
-      userEmail = u.email;
+      userName = userDoc.name;
+      userEmail = userDoc.email;
 
-      // Conflict: same user already has this country (another pool doc)
-      // Single-field query — filter country in JS to avoid composite index
-      const existing = await db
-        .collection("userPools")
-        .where("userId", "==", nextUserId)
-        .get();
+      const { data: existing } = await supabaseAdmin()
+        .from("user_pools")
+        .select("id, country")
+        .eq("user_id", nextUserId);
 
-      const conflict = existing.docs.find(
-        (d) => d.id !== id && d.data().country === nextCountry
+      const conflict = (existing ?? []).find(
+        (d) => d.id !== id && d.country === nextCountry
       );
       if (conflict) {
         return NextResponse.json(
@@ -96,17 +109,21 @@ export async function PATCH(
       }
     }
 
-    await poolRef.update({
-      userId: nextUserId,
-      userName,
-      userEmail,
-      country: nextCountry,
-      sizePerLane: nextActive,
-      backupLimit: nextBackup,
-    });
+    const { error } = await supabaseAdmin()
+      .from("user_pools")
+      .update({
+        user_id: nextUserId,
+        user_name: userName,
+        user_email: userEmail,
+        country: nextCountry,
+        size_per_lane: nextActive,
+        backup_limit: nextBackup,
+      })
+      .eq("id", id);
 
-    // Refresh user meta for old and/or new owner
-    const usersToSync = new Set<string>([current.userId as string, nextUserId]);
+    if (error) throw new Error(error.message);
+
+    const usersToSync = new Set<string>([current.user_id, nextUserId]);
     for (const uid of usersToSync) {
       await syncUserPoolMeta(uid);
     }
@@ -119,10 +136,10 @@ export async function PATCH(
       metadata: {
         poolId: id,
         before: {
-          userId: current.userId,
+          userId: current.user_id,
           country: current.country,
-          sizePerLane: current.sizePerLane,
-          backupLimit: current.backupLimit ?? null,
+          sizePerLane: current.size_per_lane,
+          backupLimit: current.backup_limit ?? null,
         },
         after: {
           userId: nextUserId,
@@ -157,18 +174,29 @@ export async function DELETE(
   try {
     const actor = await requireAuth(["admin"]);
     const { id } = await params;
-    const db = adminDb();
-    const poolRef = db.collection("userPools").doc(id);
-    const poolDoc = await poolRef.get();
 
-    if (!poolDoc.exists) {
-      return NextResponse.json({ success: false, error: "Pool not found" }, { status: 404 });
+    const { data } = await supabaseAdmin()
+      .from("user_pools")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (!data) {
+      return NextResponse.json(
+        { success: false, error: "Pool not found" },
+        { status: 404 }
+      );
     }
 
-    const data = poolDoc.data()!;
-    const userId = data.userId as string;
+    const userId = data.user_id;
 
-    await poolRef.delete();
+    const { error } = await supabaseAdmin()
+      .from("user_pools")
+      .delete()
+      .eq("id", id);
+
+    if (error) throw new Error(error.message);
+
     await syncUserPoolMeta(userId);
 
     await writeAuditLog({
@@ -179,8 +207,8 @@ export async function DELETE(
       metadata: {
         poolId: id,
         country: data.country,
-        sizePerLane: data.sizePerLane,
-        backupLimit: data.backupLimit ?? null,
+        sizePerLane: data.size_per_lane,
+        backupLimit: data.backup_limit ?? null,
       },
     });
 

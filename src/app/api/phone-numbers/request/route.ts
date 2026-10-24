@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import {
   assignAvailablePhone,
@@ -8,7 +8,6 @@ import {
   notifyManagers,
   toIso,
 } from "@/lib/utils-server";
-import { FieldValue } from "firebase-admin/firestore";
 
 const requestSchema = z.object({
   country: z.enum(["FR", "BE", "UK", "DE"]),
@@ -30,10 +29,7 @@ export async function POST(request: NextRequest) {
     }
 
     const { country, reason } = parsed.data;
-    const db = adminDb();
-
     const limit: number = actor.activeProxyLimit ?? 4;
-
     const activeCount = await countActivePhones(actor.uid);
 
     if (activeCount >= limit) {
@@ -48,45 +44,46 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const reqRef = db.collection("requests").doc();
-      await reqRef.set({
-        type: "phone",
-        requestedBy: actor.uid,
-        requestedByName: actor.name,
-        requestedByEmail: actor.email,
-        country,
-        reason,
-        status: "pending",
-        reviewedBy: null,
-        reviewedAt: null,
-        fulfilledItemId: null,
-        createdAt: FieldValue.serverTimestamp(),
-      });
+      const { data: reqRow, error } = await supabaseAdmin()
+        .from("requests")
+        .insert({
+          type: "phone",
+          requested_by: actor.uid,
+          requested_by_name: actor.name,
+          requested_by_email: actor.email,
+          country,
+          reason,
+          status: "pending",
+        })
+        .select("id")
+        .single();
+
+      if (error || !reqRow) throw new Error(error?.message ?? "Failed to create request");
 
       await notifyManagers({
         type: "request_pending",
         message: `${actor.name} requested an extra phone number (${country}): "${reason}"`,
-        relatedId: reqRef.id,
+        relatedId: reqRow.id,
       });
 
       return NextResponse.json({
         success: true,
         data: {
           autoAssigned: false,
-          requestId: reqRef.id,
+          requestId: reqRow.id,
           message: "Request submitted and pending manager approval.",
         },
       });
     }
 
-    const availableSnap = await db
-      .collection("phoneNumbers")
-      .where("country", "==", country)
-      .where("status", "==", "available")
-      .limit(1)
-      .get();
+    const { data: available } = await supabaseAdmin()
+      .from("phone_numbers")
+      .select("id")
+      .eq("country", country)
+      .eq("status", "available")
+      .limit(1);
 
-    if (availableSnap.empty) {
+    if (!available?.length) {
       return NextResponse.json(
         {
           success: false,

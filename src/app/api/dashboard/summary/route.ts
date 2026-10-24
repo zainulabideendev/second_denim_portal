@@ -1,34 +1,38 @@
 import { NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import { toIso } from "@/lib/utils-server";
 import type { Country, CountryStats } from "@/lib/types";
 import { differenceInDays } from "date-fns";
-import {
-  countByStatuses,
-  getDocsByStatuses,
-} from "@/lib/firestore-reads";
 
 const COUNTRIES: Country[] = ["FR", "BE", "UK", "DE"];
 const EXPIRY_WARN_DAYS = 7;
 
-function countryStatsFromDocs(
-  docs: FirebaseFirestore.QueryDocumentSnapshot[],
+type RowWithCountry = {
+  id: string;
+  country: string;
+  status: string;
+  expires_at?: string | null;
+  assigned_to?: string | null;
+};
+
+function countryStatsFromRows(
+  rows: RowWithCountry[],
   availableStatuses: string[],
   assignedStatuses: string[],
   flaggedStatuses: string[]
 ): CountryStats[] {
   return COUNTRIES.map((country) => {
-    const countryDocs = docs.filter((d) => d.data().country === country);
+    const countryDocs = rows.filter((d) => d.country === country);
     const available = countryDocs.filter((d) =>
-      availableStatuses.includes(d.data().status)
+      availableStatuses.includes(d.status)
     ).length;
     const assigned = countryDocs.filter((d) =>
-      assignedStatuses.includes(d.data().status)
+      assignedStatuses.includes(d.status)
     ).length;
-    const expired = countryDocs.filter((d) => d.data().status === "expired").length;
+    const expired = countryDocs.filter((d) => d.status === "expired").length;
     const flagged = countryDocs.filter((d) =>
-      flaggedStatuses.includes(d.data().status)
+      flaggedStatuses.includes(d.status)
     ).length;
     return {
       country,
@@ -44,48 +48,60 @@ function countryStatsFromDocs(
 export async function GET() {
   try {
     const actor = await requireAuth();
-    const db = adminDb();
     const now = new Date();
 
     if (actor.role === "salesman") {
-      const [proxySnap, phoneSnap, reqSnap] = await Promise.all([
-        db.collection("proxies").where("assignedTo", "==", actor.uid).get(),
-        db.collection("phoneNumbers").where("assignedTo", "==", actor.uid).get(),
-        db
-          .collection("requests")
-          .where("requestedBy", "==", actor.uid)
-          .limit(50)
-          .get(),
+      const [proxyRes, phoneRes, reqRes] = await Promise.all([
+        supabaseAdmin()
+          .from("proxies")
+          .select("*")
+          .eq("assigned_to", actor.uid),
+        supabaseAdmin()
+          .from("phone_numbers")
+          .select("*")
+          .eq("assigned_to", actor.uid),
+        supabaseAdmin()
+          .from("requests")
+          .select("id, status")
+          .eq("requested_by", actor.uid)
+          .limit(50),
       ]);
 
-      const activeProxyDocs = proxySnap.docs.filter((d) =>
-        ["assigned", "flagged"].includes(d.data().status)
+      const proxyDocs = proxyRes.data ?? [];
+      const phoneDocs = phoneRes.data ?? [];
+      const reqDocs = reqRes.data ?? [];
+
+      const activeProxyDocs = proxyDocs.filter((d) =>
+        ["assigned", "flagged"].includes(d.status)
       );
-      const activePhoneDocs = phoneSnap.docs.filter((d) =>
-        ["active", "banned", "banned_with_balance", "assigned", "flagged"].includes(
-          d.data().status
-        )
+      const activePhoneDocs = phoneDocs.filter((d) =>
+        [
+          "active",
+          "banned",
+          "banned_with_balance",
+          "assigned",
+          "flagged",
+        ].includes(d.status)
       );
-      const pendingReqCount = reqSnap.docs.filter(
-        (d) => d.data().status === "pending"
-      ).length;
+      const pendingReqCount = reqDocs.filter((d) => d.status === "pending")
+        .length;
 
       const allItems = [
         ...activeProxyDocs.map((d) => ({
           id: d.id,
           type: "proxy" as const,
-          country: d.data().country as Country,
-          expiresAt: toIso(d.data().expiresAt),
-          assignedTo: d.data().assignedTo,
-          daysLeft: differenceInDays(new Date(toIso(d.data().expiresAt)), now),
+          country: d.country as Country,
+          expiresAt: toIso(d.expires_at),
+          assignedTo: d.assigned_to,
+          daysLeft: differenceInDays(new Date(toIso(d.expires_at)), now),
         })),
         ...activePhoneDocs.map((d) => ({
           id: d.id,
           type: "phone" as const,
-          country: d.data().country as Country,
-          expiresAt: toIso(d.data().expiresAt),
-          assignedTo: d.data().assignedTo,
-          daysLeft: differenceInDays(new Date(toIso(d.data().expiresAt)), now),
+          country: d.country as Country,
+          expiresAt: toIso(d.expires_at),
+          assignedTo: d.assigned_to,
+          daysLeft: differenceInDays(new Date(toIso(d.expires_at)), now),
         })),
       ];
 
@@ -109,21 +125,16 @@ export async function GET() {
       });
     }
 
-    const [
-      proxyDocs,
-      phoneDocs,
-      pendingRequests,
-    ] = await Promise.all([
-      getDocsByStatuses(
-        db,
-        "proxies",
-        ["fresh", "available", "assigned", "flagged", "expired"],
-        400
-      ),
-      getDocsByStatuses(
-        db,
-        "phoneNumbers",
-        [
+    const [proxyRes, phoneRes, pendingRes] = await Promise.all([
+      supabaseAdmin()
+        .from("proxies")
+        .select("id, country, status, expires_at, assigned_to")
+        .in("status", ["fresh", "available", "assigned", "flagged", "expired"])
+        .limit(2000),
+      supabaseAdmin()
+        .from("phone_numbers")
+        .select("id, country, status, expires_at, assigned_to")
+        .in("status", [
           "available",
           "active",
           "assigned",
@@ -131,19 +142,25 @@ export async function GET() {
           "flagged",
           "banned",
           "banned_with_balance",
-        ],
-        300
-      ),
-      countByStatuses(db, "requests", ["pending"]),
+        ])
+        .limit(1500),
+      supabaseAdmin()
+        .from("requests")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "pending"),
     ]);
 
-    const proxyStats = countryStatsFromDocs(
+    const proxyDocs = proxyRes.data ?? [];
+    const phoneDocs = phoneRes.data ?? [];
+    const pendingRequests = pendingRes.count ?? 0;
+
+    const proxyStats = countryStatsFromRows(
       proxyDocs,
       ["fresh", "available"],
       ["active", "assigned"],
       ["banned", "banned_with_balance", "flagged"]
     );
-    const phoneStats = countryStatsFromDocs(
+    const phoneStats = countryStatsFromRows(
       phoneDocs,
       ["available"],
       ["active", "assigned"],
@@ -156,33 +173,41 @@ export async function GET() {
     const expiringSoon = [
       ...proxyDocs
         .filter((d) => {
-          const s = d.data().status;
-          if (s !== "assigned" && s !== "available" && s !== "fresh") return false;
-          const exp = d.data().expiresAt?.toDate?.() ?? new Date(d.data().expiresAt);
+          if (
+            d.status !== "assigned" &&
+            d.status !== "available" &&
+            d.status !== "fresh"
+          )
+            return false;
+          const exp = new Date(d.expires_at);
           return exp <= soonDate;
         })
         .map((d) => ({
           id: d.id,
           type: "proxy" as const,
-          country: d.data().country as Country,
-          expiresAt: toIso(d.data().expiresAt),
-          assignedTo: d.data().assignedTo ?? null,
-          daysLeft: differenceInDays(new Date(toIso(d.data().expiresAt)), now),
+          country: d.country as Country,
+          expiresAt: toIso(d.expires_at),
+          assignedTo: d.assigned_to ?? null,
+          daysLeft: differenceInDays(new Date(toIso(d.expires_at)), now),
         })),
       ...phoneDocs
         .filter((d) => {
-          const s = d.data().status;
-          if (s !== "assigned" && s !== "available" && s !== "active") return false;
-          const exp = d.data().expiresAt?.toDate?.() ?? new Date(d.data().expiresAt);
+          if (
+            d.status !== "assigned" &&
+            d.status !== "available" &&
+            d.status !== "active"
+          )
+            return false;
+          const exp = new Date(d.expires_at);
           return exp <= soonDate;
         })
         .map((d) => ({
           id: d.id,
           type: "phone" as const,
-          country: d.data().country as Country,
-          expiresAt: toIso(d.data().expiresAt),
-          assignedTo: d.data().assignedTo ?? null,
-          daysLeft: differenceInDays(new Date(toIso(d.data().expiresAt)), now),
+          country: d.country as Country,
+          expiresAt: toIso(d.expires_at),
+          assignedTo: d.assigned_to ?? null,
+          daysLeft: differenceInDays(new Date(toIso(d.expires_at)), now),
         })),
     ].sort((a, b) => a.daysLeft - b.daysLeft);
 

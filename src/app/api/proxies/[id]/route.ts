@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
 import { mapProxyDoc } from "@/lib/sync-enrich";
+import type { Database } from "@/lib/database.types";
 
 const updateSchema = z.object({
   host: z.string().min(1).optional(),
@@ -16,6 +17,17 @@ const updateSchema = z.object({
   country: z.enum(["FR", "BE", "UK", "DE"]).optional(),
 });
 
+const FIELD_MAP: Record<string, string> = {
+  host: "host",
+  port: "port",
+  username: "username",
+  password: "password",
+  notes: "notes",
+  vintedUsername: "vinted_username",
+  vintedPassword: "vinted_password",
+  country: "country",
+};
+
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -27,7 +39,10 @@ export async function PATCH(
 
     if (!parsed.success) {
       return NextResponse.json(
-        { success: false, error: parsed.error.issues[0]?.message ?? "Invalid data" },
+        {
+          success: false,
+          error: parsed.error.issues[0]?.message ?? "Invalid data",
+        },
         { status: 400 }
       );
     }
@@ -39,33 +54,55 @@ export async function PATCH(
       );
     }
 
-    const db = adminDb();
-    const proxyRef = db.collection("proxies").doc(id);
-    const proxyDoc = await proxyRef.get();
+    const { data: proxyData } = await supabaseAdmin()
+      .from("proxies")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
 
-    if (!proxyDoc.exists) {
-      return NextResponse.json({ success: false, error: "Proxy not found" }, { status: 404 });
+    if (!proxyData) {
+      return NextResponse.json(
+        { success: false, error: "Proxy not found" },
+        { status: 404 }
+      );
     }
 
-    const data = proxyDoc.data()!;
-    if (actor.role === "salesman" && data.assignedTo !== actor.uid) {
-      return NextResponse.json({ success: false, error: "Not your proxy" }, { status: 403 });
+    if (actor.role === "salesman" && proxyData.assigned_to !== actor.uid) {
+      return NextResponse.json(
+        { success: false, error: "Not your proxy" },
+        { status: 403 }
+      );
     }
 
-    const updates: Record<string, string> = {};
+    const updates: Database["public"]["Tables"]["proxies"]["Update"] = {};
     for (const [key, value] of Object.entries(parsed.data)) {
-      if (value !== undefined) updates[key] = value;
+      if (value !== undefined) {
+        const col = FIELD_MAP[key] ?? key;
+        (updates as Record<string, string>)[col] = value;
+      }
     }
 
     if (Object.keys(updates).length === 0) {
-      return NextResponse.json({ success: false, error: "No changes" }, { status: 400 });
+      return NextResponse.json(
+        { success: false, error: "No changes" },
+        { status: 400 }
+      );
     }
 
-    await proxyRef.update(updates);
+    const { error } = await supabaseAdmin()
+      .from("proxies")
+      .update(updates)
+      .eq("id", id);
 
-    const metadata: Record<string, unknown> = { fields: Object.keys(updates) };
-    if (updates.country && updates.country !== data.country) {
-      metadata.previousCountry = data.country;
+    if (error) throw new Error(error.message);
+
+    const metadata: Record<string, unknown> = {
+      fields: Object.keys(parsed.data).filter(
+        (k) => parsed.data[k as keyof typeof parsed.data] !== undefined
+      ),
+    };
+    if (updates.country && updates.country !== proxyData.country) {
+      metadata.previousCountry = proxyData.country;
       metadata.country = updates.country;
     }
 
@@ -77,8 +114,13 @@ export async function PATCH(
       metadata,
     });
 
-    const next = await proxyRef.get();
-    return NextResponse.json({ success: true, data: mapProxyDoc(next) });
+    const { data: next } = await supabaseAdmin()
+      .from("proxies")
+      .select("*")
+      .eq("id", id)
+      .single();
+
+    return NextResponse.json({ success: true, data: mapProxyDoc(next!) });
   } catch (err) {
     return handleAuthError(err);
   }

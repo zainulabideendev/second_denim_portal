@@ -1,66 +1,72 @@
-import { adminDb } from "@/lib/firebase-admin";
-import { FieldValue } from "firebase-admin/firestore";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { writeAuditLog } from "@/lib/audit";
+import { emailProxySnapshotFields } from "@/lib/sync-enrich";
 
-/** Link a proxy and email (1:1). Clears any prior links on either side. */
 export async function linkProxyToEmail(
   proxyId: string,
   emailId: string,
   actorUid: string,
   options?: { skipAudit?: boolean }
 ): Promise<void> {
-  const db = adminDb();
-  const proxyRef = db.collection("proxies").doc(proxyId);
-  const emailRef = db.collection("emails").doc(emailId);
+  const db = supabaseAdmin();
 
-  const [proxyDoc, emailDoc] = await Promise.all([proxyRef.get(), emailRef.get()]);
+  const [{ data: proxy }, { data: email }] = await Promise.all([
+    db.from("proxies").select("*").eq("id", proxyId).maybeSingle(),
+    db.from("emails").select("*").eq("id", emailId).maybeSingle(),
+  ]);
 
-  if (!proxyDoc.exists) throw new Error("Proxy not found");
-  if (!emailDoc.exists) throw new Error("Email not found");
+  if (!proxy) throw new Error("Proxy not found");
+  if (!email) throw new Error("Email not found");
 
-  const proxyData = proxyDoc.data()!;
-  const emailData = emailDoc.data()!;
-
-  const batch = db.batch();
-  const now = FieldValue.serverTimestamp();
-
-  if (proxyData.syncedEmailId && proxyData.syncedEmailId !== emailId) {
-    const oldEmailRef = db.collection("emails").doc(proxyData.syncedEmailId);
-    batch.update(oldEmailRef, {
-      syncedProxyId: null,
-      syncedAt: null,
-      syncedProxyHost: null,
-      syncedProxyPort: null,
-      syncedProxyCountry: null,
-    });
+  if (proxy.synced_email_id && proxy.synced_email_id !== emailId) {
+    await db
+      .from("emails")
+      .update({
+        synced_proxy_id: null,
+        synced_at: null,
+        ...emailProxySnapshotFields(null),
+      })
+      .eq("id", proxy.synced_email_id);
   }
 
-  if (emailData.syncedProxyId && emailData.syncedProxyId !== proxyId) {
-    const oldProxyRef = db.collection("proxies").doc(emailData.syncedProxyId);
-    batch.update(oldProxyRef, {
-      syncedEmailId: null,
-      syncedAt: null,
-      syncedEmailEmail: null,
-      syncedEmailPassword: null,
-    });
+  if (email.synced_proxy_id && email.synced_proxy_id !== proxyId) {
+    await db
+      .from("proxies")
+      .update({
+        synced_email_id: null,
+        synced_at: null,
+        synced_email_email: null,
+        synced_email_password: null,
+      })
+      .eq("id", email.synced_proxy_id);
   }
 
-  // Denormalize email onto proxy so list APIs skip N+1 email reads
-  batch.update(proxyRef, {
-    syncedEmailId: emailId,
-    syncedAt: now,
-    syncedEmailEmail: emailData.email ?? "",
-    syncedEmailPassword: emailData.password ?? "",
-  });
-  batch.update(emailRef, {
-    syncedProxyId: proxyId,
-    syncedAt: now,
-    syncedProxyHost: proxyData.host ?? "",
-    syncedProxyPort: proxyData.port ?? "",
-    syncedProxyCountry: proxyData.country ?? "",
-  });
+  const now = new Date().toISOString();
 
-  await batch.commit();
+  const [{ error: proxyErr }, { error: emailErr }] = await Promise.all([
+    db
+      .from("proxies")
+      .update({
+        synced_email_id: emailId,
+        synced_at: now,
+        synced_email_email: email.email ?? "",
+        synced_email_password: email.password ?? "",
+      })
+      .eq("id", proxyId),
+    db
+      .from("emails")
+      .update({
+        synced_proxy_id: proxyId,
+        synced_at: now,
+        synced_proxy_host: proxy.host ?? "",
+        synced_proxy_port: proxy.port ?? "",
+        synced_proxy_country: proxy.country,
+      })
+      .eq("id", emailId),
+  ]);
+
+  if (proxyErr) throw new Error(proxyErr.message);
+  if (emailErr) throw new Error(emailErr.message);
 
   if (!options?.skipAudit) {
     await writeAuditLog({
@@ -68,41 +74,46 @@ export async function linkProxyToEmail(
       action: "proxy.email_synced",
       targetType: "proxy",
       targetId: proxyId,
-      metadata: { emailId, email: emailData.email },
+      metadata: { emailId, email: email.email },
     });
   }
 }
 
-/** Remove sync link from proxy (and paired email). */
 export async function unlinkProxyEmail(
   proxyId: string,
   actorUid: string
 ): Promise<void> {
-  const db = adminDb();
-  const proxyRef = db.collection("proxies").doc(proxyId);
-  const proxyDoc = await proxyRef.get();
+  const db = supabaseAdmin();
+  const { data: proxy } = await db
+    .from("proxies")
+    .select("*")
+    .eq("id", proxyId)
+    .maybeSingle();
 
-  if (!proxyDoc.exists) throw new Error("Proxy not found");
+  if (!proxy) throw new Error("Proxy not found");
 
-  const emailId = proxyDoc.data()?.syncedEmailId as string | undefined;
+  const emailId = proxy.synced_email_id;
   if (!emailId) throw new Error("Proxy is not synced to an email");
 
-  const batch = db.batch();
-  batch.update(proxyRef, {
-    syncedEmailId: null,
-    syncedAt: null,
-    syncedEmailEmail: null,
-    syncedEmailPassword: null,
-  });
-  batch.update(db.collection("emails").doc(emailId), {
-    syncedProxyId: null,
-    syncedAt: null,
-    syncedProxyHost: null,
-    syncedProxyPort: null,
-    syncedProxyCountry: null,
-  });
-
-  await batch.commit();
+  await Promise.all([
+    db
+      .from("proxies")
+      .update({
+        synced_email_id: null,
+        synced_at: null,
+        synced_email_email: null,
+        synced_email_password: null,
+      })
+      .eq("id", proxyId),
+    db
+      .from("emails")
+      .update({
+        synced_proxy_id: null,
+        synced_at: null,
+        ...emailProxySnapshotFields(null),
+      })
+      .eq("id", emailId),
+  ]);
 
   await writeAuditLog({
     actorUid,
@@ -113,81 +124,46 @@ export async function unlinkProxyEmail(
   });
 }
 
-// function sortByCreated(
-//   a: FirebaseFirestore.QueryDocumentSnapshot,
-//   b: FirebaseFirestore.QueryDocumentSnapshot
-// ) {
-//   const aAt =
-//     a.data().createdAt?.toDate?.() ??
-//     a.data().purchasedAt?.toDate?.() ??
-//     new Date(0);
-//   const bAt =
-//     b.data().createdAt?.toDate?.() ??
-//     b.data().purchasedAt?.toDate?.() ??
-//     new Date(0);
-//   return aAt.getTime() - bAt.getTime();
-// }
-
-/** Pair unsynced fresh proxies with unsynced fresh emails (1:1, FIFO). */
-// Auto Sync Fresh (proxy–email) — temporarily disabled
-/*
-export async function autoSyncFreshPairs(actorUid: string): Promise<{
-  paired: number;
-  freshProxies: number;
-  freshEmails: number;
-  pairs: Array<{ proxyId: string; emailId: string }>;
-}> {
-  const db = adminDb();
-
-  const [proxySnap, emailSnap] = await Promise.all([
-    db.collection("proxies").limit(500).get(),
-    db.collection("emails").limit(500).get(),
+export async function autoSyncFreshEmails(
+  actorUid: string
+): Promise<{ synced: number; pairs: Array<{ proxyId: string; emailId: string }> }> {
+  const db = supabaseAdmin();
+  const [{ data: proxies }, { data: emails }] = await Promise.all([
+    db
+      .from("proxies")
+      .select("id")
+      .is("synced_email_id", null)
+      .in("status", ["fresh", "available", "assigned"])
+      .limit(500),
+    db
+      .from("emails")
+      .select("id, status, synced_proxy_id")
+      .limit(500),
   ]);
 
-  const freshProxies = proxySnap.docs
-    .filter((d) => {
-      const data = d.data();
-      return data.status === "fresh" && !data.syncedEmailId;
-    })
-    .sort(sortByCreated);
-
-  const freshEmails = emailSnap.docs
-    .filter((d) => {
-      const data = d.data();
-      return data.status === "fresh" && !data.syncedProxyId;
-    })
-    .sort(sortByCreated);
+  const freeEmails = (emails ?? []).filter(
+    (e) => e.status === "fresh" && !e.synced_proxy_id
+  );
 
   const pairs: Array<{ proxyId: string; emailId: string }> = [];
-  const count = Math.min(freshProxies.length, freshEmails.length);
+  const limit = Math.min(proxies?.length ?? 0, freeEmails.length);
 
-  for (let i = 0; i < count; i++) {
-    const proxyId = freshProxies[i].id;
-    const emailId = freshEmails[i].id;
+  for (let i = 0; i < limit; i++) {
+    const proxyId = proxies![i].id;
+    const emailId = freeEmails[i].id;
     await linkProxyToEmail(proxyId, emailId, actorUid, { skipAudit: true });
     pairs.push({ proxyId, emailId });
   }
 
-  if (pairs.length > 0) {
+  if (pairs.length) {
     await writeAuditLog({
       actorUid,
       action: "proxy.email_auto_synced",
       targetType: "proxy",
-      targetId: "bulk",
-      metadata: {
-        paired: pairs.length,
-        freshProxies: freshProxies.length,
-        freshEmails: freshEmails.length,
-        pairs,
-      },
+      targetId: "batch",
+      metadata: { count: pairs.length },
     });
   }
 
-  return {
-    paired: pairs.length,
-    freshProxies: freshProxies.length,
-    freshEmails: freshEmails.length,
-    pairs,
-  };
+  return { synced: pairs.length, pairs };
 }
-*/

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { writeAuditLog } from "@/lib/audit";
 
 const SYSTEM_UID = "cron-system";
@@ -7,32 +7,43 @@ const SYSTEM_UID = "cron-system";
 export async function POST(request: NextRequest) {
   const cronSecret = request.headers.get("x-cron-secret");
   if (cronSecret !== process.env.CRON_SECRET) {
-    return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { success: false, error: "Unauthorized" },
+      { status: 401 }
+    );
   }
 
-  const db = adminDb();
   const now = new Date();
   let expiredProxies = 0;
   let expiredPhones = 0;
 
   try {
-    // Query only by expiresAt (single-field) — filter status in JS to avoid composite index
-    const [proxySnap, phoneSnap] = await Promise.all([
-      db.collection("proxies").where("expiresAt", "<=", now).get(),
-      db.collection("phoneNumbers").where("expiresAt", "<=", now).get(),
+    const nowIso = now.toISOString();
+
+    const [proxyRes, phoneRes] = await Promise.all([
+      supabaseAdmin()
+        .from("proxies")
+        .select("id, status, expires_at")
+        .lte("expires_at", nowIso)
+        .in("status", ["available", "active", "assigned", "fresh"]),
+      supabaseAdmin()
+        .from("phone_numbers")
+        .select("id, status, expires_at")
+        .lte("expires_at", nowIso)
+        .in("status", ["available", "active", "assigned"]),
     ]);
 
-    const proxyDocs = proxySnap.docs.filter((d) =>
-      ["available", "active", "assigned"].includes(d.data().status)
-    );
-    const phoneDocs = phoneSnap.docs.filter((d) =>
-      ["available", "active", "assigned"].includes(d.data().status)
-    );
+    const proxyDocs = proxyRes.data ?? [];
+    const phoneDocs = phoneRes.data ?? [];
 
     if (proxyDocs.length > 0) {
-      const batch = db.batch();
-      proxyDocs.forEach((doc) => batch.update(doc.ref, { status: "expired" }));
-      await batch.commit();
+      const ids = proxyDocs.map((d) => d.id);
+      const { error } = await supabaseAdmin()
+        .from("proxies")
+        .update({ status: "expired" })
+        .in("id", ids);
+      if (error) throw new Error(error.message);
+
       await Promise.all(
         proxyDocs.map((doc) =>
           writeAuditLog({
@@ -40,7 +51,7 @@ export async function POST(request: NextRequest) {
             action: "proxy.expired",
             targetType: "proxy",
             targetId: doc.id,
-            metadata: { expiresAt: doc.data().expiresAt?.toDate?.()?.toISOString() },
+            metadata: { expiresAt: doc.expires_at },
           })
         )
       );
@@ -48,9 +59,13 @@ export async function POST(request: NextRequest) {
     }
 
     if (phoneDocs.length > 0) {
-      const batch = db.batch();
-      phoneDocs.forEach((doc) => batch.update(doc.ref, { status: "expired" }));
-      await batch.commit();
+      const ids = phoneDocs.map((d) => d.id);
+      const { error } = await supabaseAdmin()
+        .from("phone_numbers")
+        .update({ status: "expired" })
+        .in("id", ids);
+      if (error) throw new Error(error.message);
+
       await Promise.all(
         phoneDocs.map((doc) =>
           writeAuditLog({
@@ -58,7 +73,7 @@ export async function POST(request: NextRequest) {
             action: "phone.expired",
             targetType: "phone",
             targetId: doc.id,
-            metadata: { expiresAt: doc.data().expiresAt?.toDate?.()?.toISOString() },
+            metadata: { expiresAt: doc.expires_at },
           })
         )
       );
@@ -71,6 +86,9 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error("Cron expire-items error:", error);
-    return NextResponse.json({ success: false, error: "Cron job failed" }, { status: 500 });
+    return NextResponse.json(
+      { success: false, error: "Cron job failed" },
+      { status: 500 }
+    );
   }
 }

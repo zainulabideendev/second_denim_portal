@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import {
   COUNTRIES,
@@ -12,42 +12,45 @@ import {
   getSizePerLaneForCountry,
   resolveUserPoolCountries,
 } from "@/lib/pool-config";
-import {
-  getTotalPoolSlots,
-  normalizeLane,
-} from "@/lib/pool-utils";
-import { getDocsByStatuses } from "@/lib/firestore-reads";
+import { getTotalPoolSlots, normalizeLane } from "@/lib/pool-utils";
 
 export async function GET() {
   try {
     await requireAuth(["admin"]);
 
-    const db = adminDb();
-    const [config, usersSnap, proxyDocs] = await Promise.all([
+    const [config, { data: salesmen }, { data: proxies }] = await Promise.all([
       getPoolConfig(),
-      db.collection("users").where("role", "==", "salesman").limit(150).get(),
-      getDocsByStatuses(db, "proxies", ["assigned", "fresh", "available"], 400),
+      supabaseAdmin()
+        .from("profiles")
+        .select("*")
+        .eq("role", "salesman")
+        .limit(150),
+      supabaseAdmin()
+        .from("proxies")
+        .select("id, country, status, assigned_to, lane")
+        .in("status", ["assigned", "fresh", "available"])
+        .limit(1200),
     ]);
 
     const stockByCountry = Object.fromEntries(
       COUNTRIES.map((c) => [c, 0])
     ) as Record<Country, number>;
 
-    proxyDocs.forEach((d) => {
-      const data = d.data();
-      const country = data.country as Country;
-      const status = data.status;
+    (proxies ?? []).forEach((d) => {
+      const country = d.country as Country;
       if (
         COUNTRIES.includes(country) &&
-        (status === "fresh" || status === "available")
+        (d.status === "fresh" || d.status === "available")
       ) {
         stockByCountry[country]++;
       }
     });
 
-    const users = usersSnap.docs.map((doc) => {
-      const data = doc.data();
-      const poolCountries = resolveUserPoolCountries(data);
+    const users = (salesmen ?? []).map((doc) => {
+      const poolCountries = resolveUserPoolCountries({
+        poolCountries: doc.pool_countries,
+        country: doc.country ?? undefined,
+      });
       const pools: Record<
         Country,
         {
@@ -67,15 +70,15 @@ export async function GET() {
           active: 0,
         };
 
-        proxyDocs
+        (proxies ?? [])
           .filter(
             (p) =>
-              p.data().assignedTo === doc.id &&
-              p.data().status === "assigned" &&
-              p.data().country === country
+              p.assigned_to === doc.id &&
+              p.status === "assigned" &&
+              p.country === country
           )
           .forEach((p) => {
-            const lane = normalizeLane(p.data().lane);
+            const lane = normalizeLane(p.lane);
             byLane[lane]++;
           });
 
@@ -89,9 +92,9 @@ export async function GET() {
 
       return {
         uid: doc.id,
-        name: data.name,
-        email: data.email,
-        status: data.status,
+        name: doc.name,
+        email: doc.email,
+        status: doc.status,
         poolCountries,
         pools,
       };

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
 import {
@@ -21,19 +21,21 @@ export async function POST(
   try {
     const actor = await requireAuth(["salesman", "admin", "manager"]);
     const { id } = await params;
-    const db = adminDb();
-    const proxyDoc = await db.collection("proxies").doc(id).get();
 
-    if (!proxyDoc.exists) {
+    const { data: proxyData } = await supabaseAdmin()
+      .from("proxies")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (!proxyData) {
       return NextResponse.json(
         { success: false, error: "Proxy not found" },
         { status: 404 }
       );
     }
 
-    const proxyData = proxyDoc.data()!;
-
-    if (actor.role === "salesman" && proxyData.assignedTo !== actor.uid) {
+    if (actor.role === "salesman" && proxyData.assigned_to !== actor.uid) {
       return NextResponse.json(
         { success: false, error: "You can only restrict your own proxies" },
         { status: 403 }
@@ -61,7 +63,7 @@ export async function POST(
       );
     }
 
-    const ownerUid = proxyData.assignedTo as string;
+    const ownerUid = proxyData.assigned_to as string;
     const country = proxyData.country as Country;
 
     const assignments = await getUserPoolAssignments(ownerUid);
@@ -75,14 +77,18 @@ export async function POST(
 
     const activeLimit = getActiveLimit(activePoolSize);
 
-    const poolSnap = await db
-      .collection("proxies")
-      .where("assignedTo", "==", ownerUid)
-      .where("status", "==", "assigned")
-      .get();
+    const { data: poolProxies } = await supabaseAdmin()
+      .from("proxies")
+      .select("country, lane, restricted")
+      .eq("assigned_to", ownerUid)
+      .eq("status", "assigned");
 
     const counts = getActivePoolCounts(
-      poolSnap.docs.map((d) => ({ ...d.data(), country: d.data().country })),
+      (poolProxies ?? []).map((d) => ({
+        country: d.country,
+        lane: d.lane ?? undefined,
+        restricted: d.restricted,
+      })),
       country
     );
 
@@ -96,7 +102,12 @@ export async function POST(
       );
     }
 
-    await proxyDoc.ref.update({ restricted: true });
+    const { error } = await supabaseAdmin()
+      .from("proxies")
+      .update({ restricted: true })
+      .eq("id", id);
+
+    if (error) throw new Error(error.message);
 
     await writeAuditLog({
       actorUid: actor.uid,

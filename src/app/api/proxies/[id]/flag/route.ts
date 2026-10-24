@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
 import { handleBanCascade, notifyManagers } from "@/lib/utils-server";
@@ -24,28 +24,24 @@ export async function POST(
     const parsed = flagSchema.safeParse(body);
 
     if (!parsed.success) {
-      const msg =
-        parsed.error.issues[0]?.message ?? "Invalid request";
-      return NextResponse.json(
-        { success: false, error: msg },
-        { status: 400 }
-      );
+      const msg = parsed.error.issues[0]?.message ?? "Invalid request";
+      return NextResponse.json({ success: false, error: msg }, { status: 400 });
     }
 
-    const db = adminDb();
-    const proxyDoc = await db.collection("proxies").doc(id).get();
+    const { data: proxyData } = await supabaseAdmin()
+      .from("proxies")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
 
-    if (!proxyDoc.exists) {
+    if (!proxyData) {
       return NextResponse.json(
         { success: false, error: "Proxy not found" },
         { status: 404 }
       );
     }
 
-    const proxyData = proxyDoc.data()!;
-
-    // Salesmen can only flag their own proxies
-    if (actor.role === "salesman" && proxyData.assignedTo !== actor.uid) {
+    if (actor.role === "salesman" && proxyData.assigned_to !== actor.uid) {
       return NextResponse.json(
         { success: false, error: "You can only flag your own proxies" },
         { status: 403 }
@@ -53,19 +49,21 @@ export async function POST(
     }
 
     const notes = parsed.data.notes;
-    const ownerUid = proxyData.assignedTo as string | null;
+    const ownerUid = proxyData.assigned_to;
     const country = proxyData.country as Country;
 
     const cascadeResult = ownerUid
       ? await handleBanCascade(id, ownerUid, country, actor.uid, notes)
       : { promoted: [], refilled: false };
 
-    // If the proxy wasn't assigned (admin flagging a global proxy), just flag it
     if (!ownerUid) {
-      await proxyDoc.ref.update({
-        status: "flagged",
-        notes: notes ? `[FLAGGED] ${notes}` : "[FLAGGED] Not working",
-      });
+      await supabaseAdmin()
+        .from("proxies")
+        .update({
+          status: "flagged",
+          notes: notes ? `[FLAGGED] ${notes}` : "[FLAGGED] Not working",
+        })
+        .eq("id", id);
     }
 
     await writeAuditLog({

@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError, invalidateUserCache } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
-import { toIso } from "@/lib/utils-server";
+import { mapProfile } from "@/lib/mappers";
+import type { Database } from "@/lib/database.types";
 
 const updateUserSchema = z.object({
   name: z.string().min(1).max(100).optional(),
@@ -23,31 +24,24 @@ export async function GET(
   { params }: { params: Promise<{ uid: string }> }
 ) {
   try {
-    const actor = await requireAuth(["admin"]);
+    await requireAuth(["admin"]);
     const { uid } = await params;
-    const db = adminDb();
 
-    const doc = await db.collection("users").doc(uid).get();
-    if (!doc.exists) {
-      return NextResponse.json({ success: false, error: "User not found" }, { status: 404 });
+    const { data, error } = await supabaseAdmin()
+      .from("profiles")
+      .select("*")
+      .eq("id", uid)
+      .maybeSingle();
+
+    if (error) throw new Error(error.message);
+    if (!data) {
+      return NextResponse.json(
+        { success: false, error: "User not found" },
+        { status: 404 }
+      );
     }
 
-    void actor;
-    const d = doc.data()!;
-    return NextResponse.json({
-      success: true,
-      data: {
-        uid: doc.id,
-        name: d.name,
-        email: d.email,
-        role: d.role,
-        country: d.country ?? null,
-        poolCountries: d.poolCountries ?? [],
-        activeProxyLimit: d.activeProxyLimit ?? 4,
-        status: d.status,
-        createdAt: toIso(d.createdAt),
-      },
-    });
+    return NextResponse.json({ success: true, data: mapProfile(data) });
   } catch (err) {
     return handleAuthError(err);
   }
@@ -72,14 +66,42 @@ export async function PATCH(
     }
 
     const updates = parsed.data;
-    const db = adminDb();
+    const patch: Database["public"]["Tables"]["profiles"]["Update"] = {};
+    if (updates.name !== undefined) patch.name = updates.name;
+    if (updates.role !== undefined) patch.role = updates.role;
+    if (updates.country !== undefined) patch.country = updates.country;
+    if (updates.poolCountries !== undefined)
+      patch.pool_countries = updates.poolCountries;
+    if (updates.activeProxyLimit !== undefined)
+      patch.active_proxy_limit = updates.activeProxyLimit;
+    if (updates.status !== undefined) patch.status = updates.status;
 
-    const userDoc = await db.collection("users").doc(uid).get();
-    if (!userDoc.exists) {
-      return NextResponse.json({ success: false, error: "User not found" }, { status: 404 });
+    const { data: existing } = await supabaseAdmin()
+      .from("profiles")
+      .select("id")
+      .eq("id", uid)
+      .maybeSingle();
+
+    if (!existing) {
+      return NextResponse.json(
+        { success: false, error: "User not found" },
+        { status: 404 }
+      );
     }
 
-    await db.collection("users").doc(uid).update(updates);
+    const { error } = await supabaseAdmin()
+      .from("profiles")
+      .update(patch)
+      .eq("id", uid);
+
+    if (error) throw new Error(error.message);
+
+    if (updates.status === "disabled") {
+      await supabaseAdmin().auth.admin.updateUserById(uid, { ban_duration: "876000h" });
+    } else if (updates.status === "active") {
+      await supabaseAdmin().auth.admin.updateUserById(uid, { ban_duration: "none" });
+    }
+
     invalidateUserCache(uid);
 
     await writeAuditLog({

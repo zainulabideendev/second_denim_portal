@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { adminDb } from "@/lib/firebase-admin";
-import { requireAuth, handleAuthError } from "@/lib/auth";
+import { supabaseAdmin } from "@/lib/supabase-admin";
+import { requireAuth, handleAuthError, invalidateUserCache } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
 import {
   computePoolLimit,
@@ -24,19 +24,28 @@ export async function GET(
   try {
     await requireAuth(["admin"]);
     const { uid } = await params;
-    const db = adminDb();
-    const doc = await db.collection("users").doc(uid).get();
 
-    if (!doc.exists) {
-      return NextResponse.json({ success: false, error: "User not found" }, { status: 404 });
+    const { data: doc } = await supabaseAdmin()
+      .from("profiles")
+      .select("*")
+      .eq("id", uid)
+      .maybeSingle();
+
+    if (!doc) {
+      return NextResponse.json(
+        { success: false, error: "User not found" },
+        { status: 404 }
+      );
     }
 
-    const data = doc.data()!;
     return NextResponse.json({
       success: true,
       data: {
         uid,
-        poolCountries: resolveUserPoolCountries(data),
+        poolCountries: resolveUserPoolCountries({
+          poolCountries: doc.pool_countries,
+          country: doc.country ?? undefined,
+        }),
       },
     });
   } catch (err) {
@@ -56,7 +65,10 @@ export async function PATCH(
 
     if (!parsed.success) {
       return NextResponse.json(
-        { success: false, error: parsed.error.issues[0]?.message ?? "Invalid request" },
+        {
+          success: false,
+          error: parsed.error.issues[0]?.message ?? "Invalid request",
+        },
         { status: 400 }
       );
     }
@@ -69,15 +81,25 @@ export async function PATCH(
       );
     }
 
-    const db = adminDb();
-    const userDoc = await db.collection("users").doc(uid).get();
-    if (!userDoc.exists) {
-      return NextResponse.json({ success: false, error: "User not found" }, { status: 404 });
+    const { data: userDoc } = await supabaseAdmin()
+      .from("profiles")
+      .select("*")
+      .eq("id", uid)
+      .maybeSingle();
+
+    if (!userDoc) {
+      return NextResponse.json(
+        { success: false, error: "User not found" },
+        { status: 404 }
+      );
     }
 
-    if (userDoc.data()?.role !== "salesman") {
+    if (userDoc.role !== "salesman") {
       return NextResponse.json(
-        { success: false, error: "Pool countries can only be set for salesmen" },
+        {
+          success: false,
+          error: "Pool countries can only be set for salesmen",
+        },
         { status: 400 }
       );
     }
@@ -85,10 +107,17 @@ export async function PATCH(
     const config = await getPoolConfig();
     const activeProxyLimit = computePoolLimit(uniqueCountries, config);
 
-    await db.collection("users").doc(uid).update({
-      poolCountries: uniqueCountries,
-      activeProxyLimit,
-    });
+    const { error } = await supabaseAdmin()
+      .from("profiles")
+      .update({
+        pool_countries: uniqueCountries,
+        active_proxy_limit: activeProxyLimit,
+      })
+      .eq("id", uid);
+
+    if (error) throw new Error(error.message);
+
+    invalidateUserCache(uid);
 
     await writeAuditLog({
       actorUid: actor.uid,

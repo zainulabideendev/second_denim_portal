@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
-import type { Country, Proxy, ProxyLane } from "@/lib/types";
+import type { Country, Proxy } from "@/lib/types";
 import { POOL_LANES } from "@/lib/types";
 import {
   enrichProxiesWithSyncedEmails,
@@ -36,16 +36,19 @@ export interface PoolResponse {
 export async function GET() {
   try {
     const actor = await requireAuth();
-    const db = adminDb();
 
-    const [assignments, snapshot] = await Promise.all([
+    const [assignments, { data, error }] = await Promise.all([
       getUserPoolAssignments(actor.uid),
-      db.collection("proxies").where("assignedTo", "==", actor.uid).get(),
+      supabaseAdmin()
+        .from("proxies")
+        .select("*")
+        .eq("assigned_to", actor.uid),
     ]);
 
-    const poolCountries = assignments.map((a) => a.country);
+    if (error) throw new Error(error.message);
 
-    const allProxies = snapshot.docs.map(mapProxyDoc);
+    const poolCountries = assignments.map((a) => a.country);
+    const allProxies = (data ?? []).map(mapProxyDoc);
     const enriched = await enrichProxiesWithSyncedEmails(allProxies);
 
     const pools: Partial<Record<Country, CountryPoolLanes>> = {};

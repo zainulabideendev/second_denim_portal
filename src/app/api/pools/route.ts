@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
 import {
@@ -41,7 +41,10 @@ export async function POST(request: NextRequest) {
 
     if (!parsed.success) {
       return NextResponse.json(
-        { success: false, error: parsed.error.issues[0]?.message ?? "Invalid request" },
+        {
+          success: false,
+          error: parsed.error.issues[0]?.message ?? "Invalid request",
+        },
         { status: 400 }
       );
     }
@@ -57,27 +60,30 @@ export async function POST(request: NextRequest) {
       ([country, sizes]) => ({ country, ...sizes })
     );
 
-    const db = adminDb();
-    const userDocs = await Promise.all(
-      uniqueUserIds.map((uid) => db.collection("users").doc(uid).get())
-    );
+    const { data: profiles, error } = await supabaseAdmin()
+      .from("profiles")
+      .select("id, name, email, role")
+      .in("id", uniqueUserIds);
+
+    if (error) throw new Error(error.message);
 
     const usersById = new Map<
       string,
       { name: string; email: string; role: string }
     >();
-    for (const doc of userDocs) {
-      if (!doc.exists) {
+
+    for (const uid of uniqueUserIds) {
+      const p = (profiles ?? []).find((row) => row.id === uid);
+      if (!p) {
         return NextResponse.json(
-          { success: false, error: `User not found: ${doc.id}` },
+          { success: false, error: `User not found: ${uid}` },
           { status: 404 }
         );
       }
-      const d = doc.data()!;
-      usersById.set(doc.id, {
-        name: d.name,
-        email: d.email,
-        role: d.role,
+      usersById.set(uid, {
+        name: p.name,
+        email: p.email,
+        role: p.role,
       });
     }
 
@@ -87,8 +93,6 @@ export async function POST(request: NextRequest) {
       actorUid: actor.uid,
       usersById,
     });
-
-    // Proxies are never auto-assigned — admin assigns manually after pool create.
 
     await writeAuditLog({
       actorUid: actor.uid,
@@ -109,7 +113,10 @@ export async function POST(request: NextRequest) {
     );
   } catch (err) {
     if (err instanceof Error && err.message.includes("already has")) {
-      return NextResponse.json({ success: false, error: err.message }, { status: 409 });
+      return NextResponse.json(
+        { success: false, error: err.message },
+        { status: 409 }
+      );
     }
     return handleAuthError(err);
   }

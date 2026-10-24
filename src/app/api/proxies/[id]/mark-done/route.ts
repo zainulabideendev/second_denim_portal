@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
 import { normalizeLane } from "@/lib/pool-utils";
@@ -17,19 +17,20 @@ export async function POST(
     const actor = await requireAuth();
     const { id } = await params;
 
-    const db = adminDb();
-    const proxyDoc = await db.collection("proxies").doc(id).get();
+    const { data: proxyData } = await supabaseAdmin()
+      .from("proxies")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
 
-    if (!proxyDoc.exists) {
+    if (!proxyData) {
       return NextResponse.json(
         { success: false, error: "Proxy not found" },
         { status: 404 }
       );
     }
 
-    const proxyData = proxyDoc.data()!;
-
-    if (actor.role === "salesman" && proxyData.assignedTo !== actor.uid) {
+    if (actor.role === "salesman" && proxyData.assigned_to !== actor.uid) {
       return NextResponse.json(
         { success: false, error: "Not your proxy" },
         { status: 403 }
@@ -38,19 +39,27 @@ export async function POST(
 
     if (normalizeLane(proxyData.lane) !== "backup") {
       return NextResponse.json(
-        { success: false, error: "Only backup proxies can be marked as account created" },
+        {
+          success: false,
+          error: "Only backup proxies can be marked as account created",
+        },
         { status: 400 }
       );
     }
 
-    if (proxyData.accountsCreated || proxyData.stagingDone) {
+    if (proxyData.accounts_created || proxyData.staging_done) {
       return NextResponse.json(
         { success: false, error: "Accounts already marked as created" },
         { status: 409 }
       );
     }
 
-    await proxyDoc.ref.update({ accountsCreated: true, stagingDone: true });
+    const { error } = await supabaseAdmin()
+      .from("proxies")
+      .update({ accounts_created: true, staging_done: true })
+      .eq("id", id);
+
+    if (error) throw new Error(error.message);
 
     await writeAuditLog({
       actorUid: actor.uid,

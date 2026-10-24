@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import {
   enrichEmailsWithSyncedProxies,
@@ -8,28 +8,23 @@ import {
 
 export async function GET(request: NextRequest) {
   try {
-    const actor = await requireAuth(["admin", "manager"]);
-    void actor;
+    await requireAuth(["admin", "manager"]);
 
-    const db = adminDb();
     const { searchParams } = new URL(request.url);
     const status = searchParams.get("status");
     const assignedTo = searchParams.get("assignedTo");
 
-    let snapshot: FirebaseFirestore.QuerySnapshot;
-    if (assignedTo) {
-      snapshot = await db.collection("emails").where("assignedTo", "==", assignedTo).limit(500).get();
-    } else {
-      snapshot = await db.collection("emails").limit(500).get();
-    }
+    let query = supabaseAdmin().from("emails").select("*").limit(500);
+    if (assignedTo) query = query.eq("assigned_to", assignedTo);
 
-    let emails = snapshot.docs.map(mapEmailDoc);
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
 
+    let emails = (data ?? []).map(mapEmailDoc);
     if (status) emails = emails.filter((e) => e.status === status);
     emails.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
     const enriched = await enrichEmailsWithSyncedProxies(emails);
-
     return NextResponse.json({ success: true, data: enriched });
   } catch (err) {
     return handleAuthError(err);

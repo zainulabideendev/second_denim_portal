@@ -1,19 +1,16 @@
 "use client";
 
 import React, { createContext, useContext, useEffect, useState } from "react";
-import { onAuthStateChanged, User } from "firebase/auth";
-import { getClientAuth, isFirebaseClientConfigured } from "@/lib/firebase-client";
+import { createClient } from "@/utils/supabase/client";
 import type { AppUser } from "@/lib/types";
 
 interface AuthContextValue {
-  firebaseUser: User | null;
   appUser: AppUser | null;
   loading: boolean;
   setAppUser: (user: AppUser | null) => void;
 }
 
 const AuthContext = createContext<AuthContextValue>({
-  firebaseUser: null,
   appUser: null,
   loading: true,
   setAppUser: () => {},
@@ -26,31 +23,29 @@ export function AuthProvider({
   children: React.ReactNode;
   initialUser: AppUser | null;
 }) {
-  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [appUser, setAppUser] = useState<AppUser | null>(initialUser);
   const [loading, setLoading] = useState(true);
 
-  // Keep client auth in sync when the server passes a new initialUser (e.g. after login refresh).
-  // Don't clear a freshly set login user if a transient null initialUser arrives mid-refresh.
   useEffect(() => {
     if (initialUser) setAppUser(initialUser);
   }, [initialUser]);
 
   useEffect(() => {
-    if (!isFirebaseClientConfigured()) {
-      setLoading(false);
-      return;
-    }
-
-    const unsub = onAuthStateChanged(getClientAuth(), (user) => {
-      setFirebaseUser(user);
+    const supabase = createClient();
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session) {
+        setAppUser(null);
+      }
       setLoading(false);
     });
-    return unsub;
+    setLoading(false);
+    return () => subscription.unsubscribe();
   }, []);
 
   return (
-    <AuthContext.Provider value={{ firebaseUser, appUser, loading, setAppUser }}>
+    <AuthContext.Provider value={{ appUser, loading, setAppUser }}>
       {children}
     </AuthContext.Provider>
   );

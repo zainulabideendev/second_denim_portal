@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
 import { createNotification, toIso } from "@/lib/utils-server";
@@ -21,14 +21,20 @@ export async function POST(
     const parsed = rejectSchema.safeParse(body);
     const reason = parsed.success ? parsed.data.reason : "";
 
-    const db = adminDb();
-    const reqDoc = await db.collection("requests").doc(id).get();
+    const { data: reqData, error } = await supabaseAdmin()
+      .from("requests")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
 
-    if (!reqDoc.exists) {
-      return NextResponse.json({ success: false, error: "Request not found" }, { status: 404 });
+    if (error) throw new Error(error.message);
+    if (!reqData) {
+      return NextResponse.json(
+        { success: false, error: "Request not found" },
+        { status: 404 }
+      );
     }
 
-    const reqData = reqDoc.data()!;
     if (reqData.status !== "pending") {
       return NextResponse.json(
         { success: false, error: "Request is not in pending state" },
@@ -37,14 +43,19 @@ export async function POST(
     }
 
     const now = new Date();
-    await reqDoc.ref.update({
-      status: "rejected",
-      reviewedBy: actor.uid,
-      reviewedByName: actor.name,
-      reviewedByEmail: actor.email,
-      reviewedAt: now,
-      rejectionReason: reason,
-    });
+    const { error: updateError } = await supabaseAdmin()
+      .from("requests")
+      .update({
+        status: "rejected",
+        reviewed_by: actor.uid,
+        reviewed_by_name: actor.name,
+        reviewed_by_email: actor.email,
+        reviewed_at: now.toISOString(),
+        rejection_reason: reason,
+      })
+      .eq("id", id);
+
+    if (updateError) throw new Error(updateError.message);
 
     await writeAuditLog({
       actorUid: actor.uid,
@@ -55,7 +66,7 @@ export async function POST(
     });
 
     await createNotification({
-      uid: reqData.requestedBy,
+      uid: reqData.requested_by,
       type: "request_reviewed",
       message: `Your ${reqData.type} request for ${reqData.country} was rejected.${reason ? ` Reason: ${reason}` : ""}`,
       relatedId: id,

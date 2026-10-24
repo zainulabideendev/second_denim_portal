@@ -1,12 +1,11 @@
-import { NextResponse } from "next/server";
-import type { NextRequest } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
+import {
+  copySessionCookies,
+  updateSession,
+} from "@/utils/supabase/middleware";
 
-const SESSION_COOKIE_NAME = "session";
-
-// Routes accessible without authentication
 const PUBLIC_ROUTES = ["/login"];
 
-// Role-based route guards (prefix matching)
 const ADMIN_ONLY_PREFIXES = ["/users", "/audit-log", "/pools"];
 const MANAGER_PLUS_PREFIXES = [
   "/proxies",
@@ -16,21 +15,21 @@ const MANAGER_PLUS_PREFIXES = [
 ];
 const SALESMAN_ROUTES = ["/proxies/my", "/phone-numbers/my", "/requests/my"];
 
-function getRouteTier(pathname: string): "public" | "salesman" | "manager" | "admin" {
+function getRouteTier(
+  pathname: string
+): "public" | "salesman" | "manager" | "admin" {
   if (PUBLIC_ROUTES.some((r) => pathname === r || pathname.startsWith(r + "/")))
     return "public";
   if (ADMIN_ONLY_PREFIXES.some((p) => pathname.startsWith(p))) return "admin";
-  // /proxies/my and /phone-numbers/my are salesman-accessible too
   if (SALESMAN_ROUTES.some((p) => pathname.startsWith(p))) return "salesman";
   if (MANAGER_PLUS_PREFIXES.some((p) => pathname.startsWith(p)))
     return "manager";
-  return "salesman"; // dashboard and anything else requires at minimum a login
+  return "salesman";
 }
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Allow API routes and Next.js internals through — they do their own auth
   if (
     pathname.startsWith("/api/") ||
     pathname.startsWith("/_next/") ||
@@ -40,28 +39,33 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const sessionCookie = request.cookies.get(SESSION_COOKIE_NAME)?.value;
+  const { supabase, supabaseResponse } = await updateSession(request);
   const tier = getRouteTier(pathname);
 
-  // Public pages: redirect to dashboard if already logged in
-  if (tier === "public") {
-    if (sessionCookie) {
-      return NextResponse.redirect(new URL("/dashboard", request.url));
-    }
-    return NextResponse.next();
+  let hasUser = false;
+  if (supabase) {
+    const { data } = await supabase.auth.getClaims();
+    hasUser = Boolean(data?.claims?.sub);
   }
 
-  // Protected pages: require session cookie (actual verification happens server-side)
-  if (!sessionCookie) {
-    return NextResponse.redirect(
+  if (tier === "public") {
+    if (hasUser) {
+      const redirect = NextResponse.redirect(
+        new URL("/dashboard", request.url)
+      );
+      return copySessionCookies(supabaseResponse, redirect);
+    }
+    return supabaseResponse;
+  }
+
+  if (!hasUser) {
+    const redirect = NextResponse.redirect(
       new URL(`/login?next=${encodeURIComponent(pathname)}`, request.url)
     );
+    return copySessionCookies(supabaseResponse, redirect);
   }
 
-  // We can't verify the JWT in Edge middleware without Firebase Admin,
-  // so we pass the role check to the page's server component / API route.
-  // The cookie presence check is enough for the redirect gate here.
-  return NextResponse.next();
+  return supabaseResponse;
 }
 
 export const config = {

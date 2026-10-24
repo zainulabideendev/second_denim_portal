@@ -1,36 +1,32 @@
 import { NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
-import { toIso } from "@/lib/utils-server";
 
 export async function GET() {
   try {
     const actor = await requireAuth();
-    const db = adminDb();
 
-    // Single where clause — sort in JS to avoid composite index
-    const snapshot = await db
-      .collection("requests")
-      .where("requestedBy", "==", actor.uid)
-      .limit(100)
-      .get();
+    const { data, error } = await supabaseAdmin()
+      .from("requests")
+      .select("*")
+      .eq("requested_by", actor.uid)
+      .limit(100);
 
-    const requests = snapshot.docs
-      .map((doc) => {
-        const d = doc.data();
-        return {
-          id: doc.id,
-          type: d.type,
-          requestedBy: d.requestedBy,
-          country: d.country,
-          reason: d.reason,
-          status: d.status,
-          reviewedBy: d.reviewedBy ?? null,
-          reviewedAt: d.reviewedAt ? toIso(d.reviewedAt) : null,
-          fulfilledItemId: d.fulfilledItemId ?? null,
-          createdAt: toIso(d.createdAt),
-        };
-      })
+    if (error) throw new Error(error.message);
+
+    const requests = (data ?? [])
+      .map((d) => ({
+        id: d.id,
+        type: d.type,
+        requestedBy: d.requested_by,
+        country: d.country,
+        reason: d.reason,
+        status: d.status,
+        reviewedBy: d.reviewed_by ?? null,
+        reviewedAt: d.reviewed_at ?? null,
+        fulfilledItemId: d.fulfilled_item_id ?? null,
+        createdAt: d.created_at,
+      }))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
     return NextResponse.json({ success: true, data: requests });

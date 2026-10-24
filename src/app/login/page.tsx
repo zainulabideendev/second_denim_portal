@@ -5,10 +5,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { signInWithEmailAndPassword } from "firebase/auth";
-import { getClientAuth, isFirebaseClientConfigured } from "@/lib/firebase-client";
 import { api } from "@/lib/api-client";
 import { useAuth } from "@/contexts/auth-context";
+import { isSupabaseClientConfigured } from "@/utils/supabase/client";
 import type { AppUser, Role } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,43 +36,44 @@ function LoginForm() {
   } = useForm<LoginForm>({ resolver: zodResolver(loginSchema) });
 
   async function onSubmit(values: LoginForm) {
-    if (!isFirebaseClientConfigured()) {
+    if (!isSupabaseClientConfigured()) {
       toast.error(
-        "Firebase is not configured on this deployment. Add NEXT_PUBLIC_FIREBASE_* env vars on Vercel and redeploy."
+        "Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_* env vars and redeploy."
       );
       return;
     }
 
     setLoading(true);
     try {
-      const userCred = await signInWithEmailAndPassword(
-        getClientAuth(),
-        values.email,
-        values.password
-      );
-      const idToken = await userCred.user.getIdToken();
       const session = await api.post<{
         uid: string;
         role: Role;
         name: string;
-      }>("/api/auth/login", { idToken });
+        email: string;
+        activeProxyLimit: number;
+        status: AppUser["status"];
+        createdAt: string;
+        country?: AppUser["country"];
+        poolCountries?: AppUser["poolCountries"];
+      }>("/api/auth/login", values);
 
-      // Set role immediately so sidebar/shell don't flash salesman UI
       setAppUser({
         uid: session.uid,
         name: session.name,
-        email: values.email,
+        email: session.email ?? values.email,
         role: session.role,
-        activeProxyLimit: 4,
-        status: "active",
-        createdAt: new Date().toISOString(),
+        activeProxyLimit: session.activeProxyLimit ?? 4,
+        status: session.status ?? "active",
+        createdAt: session.createdAt ?? new Date().toISOString(),
+        country: session.country,
+        poolCountries: session.poolCountries,
       } satisfies AppUser);
 
       router.push(next);
       router.refresh();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Login failed";
-      toast.error(msg.replace("Firebase: ", "").replace(/\s*\(.*\)\.?$/, ""));
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
@@ -82,7 +82,6 @@ function LoginForm() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="w-full max-w-[360px] space-y-8">
-        {/* Brand */}
         <div className="flex flex-col items-center gap-3">
           <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10">
             <Shield className="h-6 w-6 text-primary" />
@@ -95,12 +94,11 @@ function LoginForm() {
           </div>
         </div>
 
-        {/* Form */}
         <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
-          {!isFirebaseClientConfigured() && (
+          {!isSupabaseClientConfigured() && (
             <p className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-              Firebase env vars are missing on this deployment. Add{" "}
-              <code className="font-mono">NEXT_PUBLIC_FIREBASE_*</code> in Vercel
+              Supabase env vars are missing. Add{" "}
+              <code className="font-mono">NEXT_PUBLIC_SUPABASE_*</code> in Vercel
               and redeploy.
             </p>
           )}

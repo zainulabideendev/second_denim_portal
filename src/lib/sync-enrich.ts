@@ -1,19 +1,24 @@
-import { adminDb } from "@/lib/firebase-admin";
-import { toIso } from "@/lib/utils-server";
+import { supabaseAdmin } from "@/lib/supabase-admin";
+import { mapEmail, mapPhone, mapProxy } from "@/lib/mappers";
+import type { EmailRow, PhoneRow, ProxyRow } from "@/lib/database.types";
 
-type ProxyWithOptionalSync = {
+export { mapProxy as mapProxyDoc, mapEmail as mapEmailDoc, mapPhone as mapPhoneDoc };
+
+type SyncedProxySnap = {
   id: string;
-  syncedEmailId?: string | null;
-  syncedEmail?: { id: string; email: string; password: string } | null;
+  host: string;
+  port: string;
+  country: string;
 };
 
-/**
- * Attach synced email details. Prefer denormalized fields already on the proxy
- * (syncedEmailEmail / syncedEmailPassword) to avoid N+1 Firestore reads.
- */
-export async function enrichProxiesWithSyncedEmails<T extends ProxyWithOptionalSync>(
-  proxies: T[]
-) {
+/** Prefer denormalized snapshot fields; only fetch missing links. */
+export async function enrichProxiesWithSyncedEmails<
+  T extends {
+    id: string;
+    syncedEmailId?: string | null;
+    syncedEmail?: { id: string; email: string; password: string } | null;
+  }
+>(proxies: T[]) {
   const needFetch = proxies.filter(
     (p) => p.syncedEmailId && !p.syncedEmail?.email
   );
@@ -26,39 +31,36 @@ export async function enrichProxiesWithSyncedEmails<T extends ProxyWithOptionalS
   if (!emailIds.length) {
     return proxies.map((p) => ({
       ...p,
-      syncedEmail: p.syncedEmailId
-        ? p.syncedEmail ?? null
-        : null,
+      syncedEmail: p.syncedEmailId ? p.syncedEmail ?? null : null,
     }));
   }
 
-  const db = adminDb();
-  const emailDocs = await Promise.all(
-    emailIds.map((id) => db.collection("emails").doc(id).get())
-  );
+  const { data: emailDocs } = await supabaseAdmin()
+    .from("emails")
+    .select("id, email, password")
+    .in("id", emailIds);
+
   const emailMap = new Map(
-    emailDocs
-      .filter((d) => d.exists)
-      .map((d) => {
-        const data = d.data()!;
-        return [
-          d.id,
-          { id: d.id, email: data.email, password: data.password },
-        ] as const;
-      })
+    (emailDocs ?? []).map(
+      (d) =>
+        [d.id, { id: d.id, email: d.email, password: d.password }] as const
+    )
   );
 
-  // Backfill denormalized fields so future list calls skip these reads
   const backfills = needFetch
     .map((p) => {
       const snap = p.syncedEmailId ? emailMap.get(p.syncedEmailId) : null;
       if (!snap) return null;
-      return db.collection("proxies").doc(p.id).update({
-        syncedEmailEmail: snap.email,
-        syncedEmailPassword: snap.password,
-      });
+      return supabaseAdmin()
+        .from("proxies")
+        .update({
+          synced_email_email: snap.email,
+          synced_email_password: snap.password,
+        })
+        .eq("id", p.id);
     })
     .filter(Boolean);
+
   if (backfills.length) {
     void Promise.all(backfills).catch(() => undefined);
   }
@@ -70,13 +72,6 @@ export async function enrichProxiesWithSyncedEmails<T extends ProxyWithOptionalS
       : null,
   }));
 }
-
-type SyncedProxySnap = {
-  id: string;
-  host: string;
-  port: string;
-  country: string;
-};
 
 export async function enrichEmailsWithSyncedProxies<
   T extends {
@@ -100,38 +95,36 @@ export async function enrichEmailsWithSyncedProxies<
     }));
   }
 
-  const db = adminDb();
-  const proxyDocs = await Promise.all(
-    proxyIds.map((id) => db.collection("proxies").doc(id).get())
-  );
+  const { data: proxyDocs } = await supabaseAdmin()
+    .from("proxies")
+    .select("id, host, port, country")
+    .in("id", proxyIds);
+
   const proxyMap = new Map(
-    proxyDocs
-      .filter((d) => d.exists)
-      .map((d) => {
-        const data = d.data()!;
-        return [
+    (proxyDocs ?? []).map(
+      (d) =>
+        [
           d.id,
-          {
-            id: d.id,
-            host: data.host,
-            port: data.port,
-            country: data.country,
-          },
-        ] as const;
-      })
+          { id: d.id, host: d.host, port: d.port, country: d.country },
+        ] as const
+    )
   );
 
   const backfills = needFetch
     .map((e) => {
       const snap = e.syncedProxyId ? proxyMap.get(e.syncedProxyId) : null;
       if (!snap) return null;
-      return db.collection("emails").doc(e.id).update({
-        syncedProxyHost: snap.host,
-        syncedProxyPort: snap.port,
-        syncedProxyCountry: snap.country,
-      });
+      return supabaseAdmin()
+        .from("emails")
+        .update({
+          synced_proxy_host: snap.host,
+          synced_proxy_port: snap.port,
+          synced_proxy_country: snap.country,
+        })
+        .eq("id", e.id);
     })
     .filter(Boolean);
+
   if (backfills.length) {
     void Promise.all(backfills).catch(() => undefined);
   }
@@ -164,38 +157,36 @@ export async function enrichPhonesWithProxies<
     }));
   }
 
-  const db = adminDb();
-  const proxyDocs = await Promise.all(
-    proxyIds.map((id) => db.collection("proxies").doc(id).get())
-  );
+  const { data: proxyDocs } = await supabaseAdmin()
+    .from("proxies")
+    .select("id, host, port, country")
+    .in("id", proxyIds);
+
   const proxyMap = new Map(
-    proxyDocs
-      .filter((d) => d.exists)
-      .map((d) => {
-        const data = d.data()!;
-        return [
+    (proxyDocs ?? []).map(
+      (d) =>
+        [
           d.id,
-          {
-            id: d.id,
-            host: data.host,
-            port: data.port,
-            country: data.country,
-          },
-        ] as const;
-      })
+          { id: d.id, host: d.host, port: d.port, country: d.country },
+        ] as const
+    )
   );
 
   const backfills = needFetch
     .map((p) => {
       const snap = p.proxyId ? proxyMap.get(p.proxyId) : null;
       if (!snap) return null;
-      return db.collection("phoneNumbers").doc(p.id).update({
-        proxyHost: snap.host,
-        proxyPort: snap.port,
-        proxyCountry: snap.country,
-      });
+      return supabaseAdmin()
+        .from("phone_numbers")
+        .update({
+          proxy_host: snap.host,
+          proxy_port: snap.port,
+          proxy_country: snap.country,
+        })
+        .eq("id", p.id);
     })
     .filter(Boolean);
+
   if (backfills.length) {
     void Promise.all(backfills).catch(() => undefined);
   }
@@ -211,15 +202,15 @@ export function emailProxySnapshotFields(
 ) {
   if (!proxy) {
     return {
-      syncedProxyHost: null,
-      syncedProxyPort: null,
-      syncedProxyCountry: null,
+      synced_proxy_host: null,
+      synced_proxy_port: null,
+      synced_proxy_country: null,
     };
   }
   return {
-    syncedProxyHost: proxy.host ?? "",
-    syncedProxyPort: proxy.port ?? "",
-    syncedProxyCountry: proxy.country ?? "",
+    synced_proxy_host: proxy.host ?? "",
+    synced_proxy_port: proxy.port ?? "",
+    synced_proxy_country: (proxy.country as "FR" | "BE" | "UK" | "DE") ?? null,
   };
 }
 
@@ -227,110 +218,23 @@ export function phoneProxySnapshotFields(
   proxy: { host?: string; port?: string; country?: string } | null
 ) {
   if (!proxy) {
-    return { proxyHost: null, proxyPort: null, proxyCountry: null };
+    return { proxy_host: null, proxy_port: null, proxy_country: null };
   }
   return {
-    proxyHost: proxy.host ?? "",
-    proxyPort: proxy.port ?? "",
-    proxyCountry: proxy.country ?? "",
+    proxy_host: proxy.host ?? "",
+    proxy_port: proxy.port ?? "",
+    proxy_country: (proxy.country as "FR" | "BE" | "UK" | "DE") ?? null,
   };
 }
 
-export function mapProxyDoc(
-  doc: FirebaseFirestore.QueryDocumentSnapshot | FirebaseFirestore.DocumentSnapshot
-) {
-  const d = doc.data()!;
-  return {
-    id: doc.id,
-    country: d.country,
-    host: d.host,
-    port: d.port,
-    username: d.username,
-    password: d.password,
-    provider: d.provider,
-    purchasedAt: toIso(d.purchasedAt),
-    expiresAt: toIso(d.expiresAt),
-    status: d.status,
-    assignedTo: d.assignedTo ?? null,
-    assignedAt: d.assignedAt ? toIso(d.assignedAt) : null,
-    batchId: d.batchId ?? "",
-    notes: d.notes ?? "",
-    lane: d.lane ?? null,
-    accountsCreated: d.accountsCreated ?? d.stagingDone ?? false,
-    stagingDone: d.stagingDone ?? false,
-    restricted: d.restricted ?? false,
-    syncedEmailId: d.syncedEmailId ?? null,
-    syncedAt: d.syncedAt ? toIso(d.syncedAt) : null,
-    // Denormalized sync snapshot (avoids email doc reads on list endpoints)
-    syncedEmail:
-      d.syncedEmailId && d.syncedEmailEmail
-        ? {
-            id: String(d.syncedEmailId),
-            email: String(d.syncedEmailEmail),
-            password: String(d.syncedEmailPassword ?? ""),
-          }
-        : null,
-    vintedUsername: d.vintedUsername ?? "",
-    vintedPassword: d.vintedPassword ?? "",
-    phoneId: d.phoneId ?? null,
-    phoneNumber: d.phoneNumber ?? null,
-  };
+export function mapProxyFromRow(row: ProxyRow) {
+  return mapProxy(row);
 }
 
-export function mapEmailDoc(
-  doc: FirebaseFirestore.QueryDocumentSnapshot | FirebaseFirestore.DocumentSnapshot
-) {
-  const d = doc.data()!;
-  return {
-    id: doc.id,
-    email: d.email,
-    password: d.password,
-    status: d.status,
-    assignedTo: d.assignedTo ?? null,
-    assignedAt: d.assignedAt ? toIso(d.assignedAt) : null,
-    notes: d.notes ?? "",
-    createdAt: toIso(d.createdAt),
-    syncedProxyId: d.syncedProxyId ?? null,
-    syncedAt: d.syncedAt ? toIso(d.syncedAt) : null,
-    syncedProxy:
-      d.syncedProxyId && d.syncedProxyHost
-        ? {
-            id: String(d.syncedProxyId),
-            host: String(d.syncedProxyHost),
-            port: String(d.syncedProxyPort ?? ""),
-            country: d.syncedProxyCountry,
-          }
-        : null,
-  };
+export function mapEmailFromRow(row: EmailRow) {
+  return mapEmail(row);
 }
 
-export function mapPhoneDoc(
-  doc: FirebaseFirestore.QueryDocumentSnapshot | FirebaseFirestore.DocumentSnapshot
-) {
-  const d = doc.data()!;
-  return {
-    id: doc.id,
-    country: d.country,
-    number: d.number,
-    provider: d.provider,
-    purchasedAt: toIso(d.purchasedAt),
-    expiresAt: toIso(d.expiresAt),
-    status: d.status,
-    numberType: d.numberType ?? "temporary",
-    assignedTo: d.assignedTo ?? null,
-    assignedAt: d.assignedAt ? toIso(d.assignedAt) : null,
-    batchId: d.batchId ?? "",
-    notes: d.notes ?? "",
-    lane: d.lane ?? null,
-    proxyId: d.proxyId ?? null,
-    proxy:
-      d.proxyId && d.proxyHost
-        ? {
-            id: String(d.proxyId),
-            host: String(d.proxyHost),
-            port: String(d.proxyPort ?? ""),
-            country: d.proxyCountry,
-          }
-        : null,
-  };
+export function mapPhoneFromRow(row: PhoneRow) {
+  return mapPhone(row);
 }

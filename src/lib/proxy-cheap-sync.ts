@@ -1,5 +1,4 @@
-import { FieldValue } from "firebase-admin/firestore";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { writeAuditLog } from "@/lib/audit";
 import {
   PROXY_CHEAP_PROVIDER,
@@ -9,7 +8,7 @@ import {
 } from "@/lib/proxy-cheap";
 
 const SYSTEM_UID = "cron-system";
-const FIRESTORE_BATCH_LIMIT = 450; // leave room for importBatches doc
+const INSERT_CHUNK = 100;
 
 export interface SyncProxyCheapResult {
   dryRun: boolean;
@@ -53,19 +52,25 @@ interface ExistingProxyEntry {
 
 /**
  * Load existing Proxy-Cheap proxies — keyed by proxyCheapId.
- * We store the Firestore doc id and expiresAt so we can detect stale expiry dates.
  */
-async function loadExistingProxyCheapEntries(): Promise<Map<string, ExistingProxyEntry>> {
-  const db = adminDb();
-  const snap = await db.collection("proxies").select("proxyCheapId", "expiresAt").get();
+async function loadExistingProxyCheapEntries(): Promise<
+  Map<string, ExistingProxyEntry>
+> {
+  const { data, error } = await supabaseAdmin()
+    .from("proxies")
+    .select("id, proxy_cheap_id, expires_at")
+    .not("proxy_cheap_id", "is", null);
+
+  if (error) throw new Error(error.message);
+
   const map = new Map<string, ExistingProxyEntry>();
-  for (const doc of snap.docs) {
-    const { proxyCheapId, expiresAt } = doc.data();
-    const id = proxyCheapId != null ? String(proxyCheapId).trim() : "";
+  for (const row of data ?? []) {
+    const id =
+      row.proxy_cheap_id != null ? String(row.proxy_cheap_id).trim() : "";
     if (id === "") continue;
     map.set(id, {
-      docId: doc.id,
-      expiresAt: expiresAt != null ? String(expiresAt) : null,
+      docId: row.id,
+      expiresAt: row.expires_at != null ? String(row.expires_at) : null,
     });
   }
   return map;
@@ -75,96 +80,81 @@ async function writeNewProxies(
   rows: MappedProxyCheapProxy[],
   actorUid: string
 ): Promise<{ batchId: string; count: number; proxyIds: string[] }> {
-  const db = adminDb();
-  const batchRef = db.collection("importBatches").doc();
-  const batchId = batchRef.id;
-  const proxyIds: string[] = [];
+  const { data: batch, error: batchError } = await supabaseAdmin()
+    .from("import_batches")
+    .insert({
+      type: "proxy",
+      imported_by: actorUid,
+      count: rows.length,
+      raw_file_name: "proxy-cheap-sync",
+    })
+    .select("id")
+    .single();
 
-  let writeBatch = db.batch();
-  let opsInBatch = 0;
-
-  writeBatch.set(batchRef, {
-    type: "proxy",
-    importedBy: actorUid,
-    importedAt: FieldValue.serverTimestamp(),
-    count: rows.length,
-    rawFileName: "proxy-cheap-sync",
-    createdAt: FieldValue.serverTimestamp(),
-  });
-  opsInBatch += 1;
-
-  const commitIfNeeded = async (force = false) => {
-    if (opsInBatch === 0) return;
-    if (!force && opsInBatch < FIRESTORE_BATCH_LIMIT) return;
-    await writeBatch.commit();
-    writeBatch = db.batch();
-    opsInBatch = 0;
-  };
-
-  for (const row of rows) {
-    const proxyRef = db.collection("proxies").doc();
-    proxyIds.push(proxyRef.id);
-    // Insert only — never update existing docs matched by proxyCheapId.
-    writeBatch.set(proxyRef, {
-      proxyCheapId: row.proxyCheapId,
-      host: row.host,
-      port: row.port,
-      username: row.username,
-      password: row.password,
-      status: row.status, // "fresh"
-      country: row.country,
-      provider: row.provider || PROXY_CHEAP_PROVIDER,
-      purchasedAt: row.purchasedAt,
-      expiresAt: row.expiresAt,
-      assignedTo: null,
-      assignedAt: null,
-      batchId,
-      notes: row.notes ?? "",
-      syncedEmailId: null,
-      syncedAt: null,
-      createdAt: FieldValue.serverTimestamp(),
-    });
-    opsInBatch += 1;
-    await commitIfNeeded();
+  if (batchError || !batch) {
+    throw new Error(batchError?.message ?? "Failed to create import batch");
   }
 
-  await commitIfNeeded(true);
+  const batchId = batch.id;
+  const proxyIds: string[] = [];
+
+  for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
+    const chunk = rows.slice(i, i + INSERT_CHUNK);
+    const { data: inserted, error } = await supabaseAdmin()
+      .from("proxies")
+      .insert(
+        chunk.map((row) => ({
+          proxy_cheap_id: row.proxyCheapId,
+          host: row.host,
+          port: row.port,
+          username: row.username,
+          password: row.password,
+          status: row.status as "fresh",
+          country: row.country,
+          provider: row.provider || PROXY_CHEAP_PROVIDER,
+          purchased_at: row.purchasedAt.toISOString(),
+          expires_at: row.expiresAt.toISOString(),
+          assigned_to: null,
+          assigned_at: null,
+          batch_id: batchId,
+          notes: row.notes ?? "",
+          synced_email_id: null,
+          synced_at: null,
+        }))
+      )
+      .select("id");
+
+    if (error) throw new Error(error.message);
+    for (const p of inserted ?? []) proxyIds.push(p.id);
+  }
 
   return { batchId, count: rows.length, proxyIds };
 }
 
 /**
- * Update expiresAt on existing Proxy-Cheap proxy docs whose expiry has changed.
+ * Update expiresAt on existing Proxy-Cheap proxy rows whose expiry has changed.
  */
 async function updateExpiryDates(
   updates: Array<{ docId: string; expiresAt: Date }>
 ): Promise<void> {
   if (updates.length === 0) return;
-  const db = adminDb();
-  let writeBatch = db.batch();
-  let opsInBatch = 0;
 
-  const commitIfNeeded = async (force = false) => {
-    if (opsInBatch === 0) return;
-    if (!force && opsInBatch < FIRESTORE_BATCH_LIMIT) return;
-    await writeBatch.commit();
-    writeBatch = db.batch();
-    opsInBatch = 0;
-  };
-
-  for (const { docId, expiresAt } of updates) {
-    const ref = db.collection("proxies").doc(docId);
-    writeBatch.update(ref, { expiresAt: expiresAt.toISOString() });
-    opsInBatch += 1;
-    await commitIfNeeded();
+  for (let i = 0; i < updates.length; i += INSERT_CHUNK) {
+    const chunk = updates.slice(i, i + INSERT_CHUNK);
+    await Promise.all(
+      chunk.map(({ docId, expiresAt }) =>
+        supabaseAdmin()
+          .from("proxies")
+          .update({ expires_at: expiresAt.toISOString() })
+          .eq("id", docId)
+      )
+    );
   }
-
-  await commitIfNeeded(true);
 }
 
 export interface SyncProxyCheapOptions {
   actorUid?: string;
-  /** When true: fetch + compare only — never write to Firestore. */
+  /** When true: fetch + compare only — never write. */
   dryRun?: boolean;
 }
 
@@ -197,18 +187,22 @@ export async function syncProxyCheapFromApi(
   for (const row of fetched) {
     const existing = existingEntries.get(row.proxyCheapId);
     if (existing) {
-      // Compare expiresAt — update if the API reports a different date
       const apiExpiry = row.expiresAt.toISOString();
       const storedExpiry = existing.expiresAt ?? "";
       if (apiExpiry !== storedExpiry) {
-        expiryUpdates.push({ docId: existing.docId, expiresAt: row.expiresAt });
+        expiryUpdates.push({
+          docId: existing.docId,
+          expiresAt: row.expiresAt,
+        });
       } else {
         skippedExisting += 1;
       }
       continue;
     }
-    // Track newly seen ids so duplicates within the same fetch are deduplicated
-    existingEntries.set(row.proxyCheapId, { docId: "", expiresAt: row.expiresAt.toISOString() });
+    existingEntries.set(row.proxyCheapId, {
+      docId: "",
+      expiresAt: row.expiresAt.toISOString(),
+    });
     fresh.push(row);
   }
 
@@ -244,7 +238,6 @@ export async function syncProxyCheapFromApi(
     };
   }
 
-  // Apply expiry updates even when there are no new proxies to insert
   await updateExpiryDates(expiryUpdates);
 
   if (fresh.length === 0) {

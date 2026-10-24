@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { adminAuth, adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
-import { toIso } from "@/lib/utils-server";
+import { mapProfile } from "@/lib/mappers";
 
 const createUserSchema = z.object({
   name: z.string().min(1).max(100),
@@ -16,32 +16,19 @@ const createUserSchema = z.object({
 
 export async function GET() {
   try {
-    const actor = await requireAuth(["admin"]);
-    const db = adminDb();
+    await requireAuth(["admin"]);
 
-    const snapshot = await db
-      .collection("users")
-      .orderBy("createdAt", "desc")
-      .get();
+    const { data, error } = await supabaseAdmin()
+      .from("profiles")
+      .select("*")
+      .order("created_at", { ascending: false });
 
-    const users = snapshot.docs.map((doc) => {
-      const d = doc.data();
-      return {
-        uid: doc.id,
-        name: d.name,
-        email: d.email,
-        role: d.role,
-        country: d.country ?? null,
-        poolCountries: d.poolCountries ?? [],
-        activeProxyLimit: d.activeProxyLimit ?? 4,
-        status: d.status,
-        createdAt: toIso(d.createdAt),
-      };
+    if (error) throw new Error(error.message);
+
+    return NextResponse.json({
+      success: true,
+      data: (data ?? []).map(mapProfile),
     });
-
-    void actor; // used for auth check
-
-    return NextResponse.json({ success: true, data: users });
   } catch (err) {
     return handleAuthError(err);
   }
@@ -60,38 +47,60 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { name, email, password, role, country, activeProxyLimit } = parsed.data;
+    const { name, email, password, role, country, activeProxyLimit } =
+      parsed.data;
 
-    // Create Firebase Auth user
-    const authUser = await adminAuth().createUser({
-      email,
-      password,
-      displayName: name,
-    });
+    const { data: created, error: authError } =
+      await supabaseAdmin().auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: { name, role },
+      });
 
-    const db = adminDb();
-    await db.collection("users").doc(authUser.uid).set({
-      name,
-      email,
-      role,
-      ...(country ? { country } : {}),
-      activeProxyLimit,
-      status: "active",
-      createdAt: new Date(),
-    });
+    if (authError || !created.user) {
+      return NextResponse.json(
+        { success: false, error: authError?.message ?? "Failed to create user" },
+        { status: 400 }
+      );
+    }
+
+    const { error: profileError } = await supabaseAdmin()
+      .from("profiles")
+      .upsert({
+        id: created.user.id,
+        name,
+        email,
+        role,
+        country: country ?? null,
+        active_proxy_limit: activeProxyLimit,
+        status: "active",
+      });
+
+    if (profileError) {
+      await supabaseAdmin().auth.admin.deleteUser(created.user.id);
+      throw new Error(profileError.message);
+    }
 
     await writeAuditLog({
       actorUid: actor.uid,
       action: "user.created",
       targetType: "user",
-      targetId: authUser.uid,
+      targetId: created.user.id,
       metadata: { name, email, role },
     });
 
     return NextResponse.json(
       {
         success: true,
-        data: { uid: authUser.uid, name, email, role, activeProxyLimit, status: "active" },
+        data: {
+          uid: created.user.id,
+          name,
+          email,
+          role,
+          activeProxyLimit,
+          status: "active",
+        },
       },
       { status: 201 }
     );

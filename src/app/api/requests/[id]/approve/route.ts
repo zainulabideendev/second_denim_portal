@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
 import {
@@ -15,14 +15,21 @@ export async function POST(
   try {
     const actor = await requireAuth(["admin", "manager"]);
     const { id } = await params;
-    const db = adminDb();
 
-    const reqDoc = await db.collection("requests").doc(id).get();
-    if (!reqDoc.exists) {
-      return NextResponse.json({ success: false, error: "Request not found" }, { status: 404 });
+    const { data: reqData, error } = await supabaseAdmin()
+      .from("requests")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (error) throw new Error(error.message);
+    if (!reqData) {
+      return NextResponse.json(
+        { success: false, error: "Request not found" },
+        { status: 404 }
+      );
     }
 
-    const reqData = reqDoc.data()!;
     if (reqData.status !== "pending") {
       return NextResponse.json(
         { success: false, error: "Request is not in pending state" },
@@ -30,11 +37,9 @@ export async function POST(
       );
     }
 
-    const { country, requestedBy, type } = reqData;
+    const { country, requested_by: requestedBy, type } = reqData;
     const now = new Date();
 
-    // Proxies are never auto-assigned — admin assigns manually after approval.
-    // Phones still auto-assign on approve if stock exists.
     let fulfilledItemId: string | null = null;
 
     if (type === "phone") {
@@ -45,14 +50,19 @@ export async function POST(
     const newStatus =
       type === "proxy" ? "approved" : fulfilledItemId ? "fulfilled" : "approved";
 
-    await reqDoc.ref.update({
-      status: newStatus,
-      reviewedBy: actor.uid,
-      reviewedByName: actor.name,
-      reviewedByEmail: actor.email,
-      reviewedAt: now,
-      fulfilledItemId,
-    });
+    const { error: updateError } = await supabaseAdmin()
+      .from("requests")
+      .update({
+        status: newStatus,
+        reviewed_by: actor.uid,
+        reviewed_by_name: actor.name,
+        reviewed_by_email: actor.email,
+        reviewed_at: now.toISOString(),
+        fulfilled_item_id: fulfilledItemId,
+      })
+      .eq("id", id);
+
+    if (updateError) throw new Error(updateError.message);
 
     await writeAuditLog({
       actorUid: actor.uid,

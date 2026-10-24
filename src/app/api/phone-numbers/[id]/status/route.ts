@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { adminDb } from "@/lib/firebase-admin";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { requireAuth, handleAuthError } from "@/lib/auth";
 import { writeAuditLog } from "@/lib/audit";
 import { isPhoneAssignedStatus } from "@/lib/phone-utils";
@@ -20,26 +20,41 @@ export async function POST(
     const body = await request.json();
     const parsed = statusSchema.safeParse(body);
     if (!parsed.success) {
-      return NextResponse.json({ success: false, error: parsed.error.flatten() }, { status: 400 });
-    }
-
-    const db = adminDb();
-    const doc = await db.collection("phoneNumbers").doc(id).get();
-    if (!doc.exists) {
-      return NextResponse.json({ success: false, error: "Phone number not found" }, { status: 404 });
-    }
-
-    const data = doc.data()!;
-    if (!data.assignedTo) {
       return NextResponse.json(
-        { success: false, error: "Only assigned numbers can have account status updated." },
+        { success: false, error: parsed.error.flatten() },
+        { status: 400 }
+      );
+    }
+
+    const { data } = await supabaseAdmin()
+      .from("phone_numbers")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (!data) {
+      return NextResponse.json(
+        { success: false, error: "Phone number not found" },
+        { status: 404 }
+      );
+    }
+
+    if (!data.assigned_to) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Only assigned numbers can have account status updated.",
+        },
         { status: 422 }
       );
     }
 
-    if (data.assignedTo !== actor.uid) {
+    if (data.assigned_to !== actor.uid) {
       return NextResponse.json(
-        { success: false, error: "Only the assigned user can update this number's status." },
+        {
+          success: false,
+          error: "Only the assigned user can update this number's status.",
+        },
         { status: 403 }
       );
     }
@@ -52,7 +67,12 @@ export async function POST(
     }
 
     const { status } = parsed.data;
-    await doc.ref.update({ status });
+    const { error } = await supabaseAdmin()
+      .from("phone_numbers")
+      .update({ status })
+      .eq("id", id);
+
+    if (error) throw new Error(error.message);
 
     await writeAuditLog({
       actorUid: actor.uid,

@@ -1,16 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { adminAuth, adminDb } from "@/lib/firebase-admin";
-import { createSessionCookie, SESSION_COOKIE_NAME } from "@/lib/auth";
-import {
-  PROFILE_COOKIE_NAME,
-  profileCookieOptions,
-  signUserProfileCookie,
-} from "@/lib/user-profile-cookie";
-import type { AppUser } from "@/lib/types";
+import { createClient } from "@/utils/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase-admin";
+import { mapProfile } from "@/lib/mappers";
+import { invalidateUserCache } from "@/lib/auth";
 
 const loginSchema = z.object({
-  idToken: z.string().min(1, "ID token is required"),
+  email: z.string().email(),
+  password: z.string().min(1),
 });
 
 export async function POST(request: NextRequest) {
@@ -20,80 +17,69 @@ export async function POST(request: NextRequest) {
 
     if (!parsed.success) {
       return NextResponse.json(
-        { success: false, error: "Invalid request body" },
+        { success: false, error: "Invalid email or password" },
         { status: 400 }
       );
     }
 
-    const { idToken } = parsed.data;
+    const { email, password } = parsed.data;
+    const supabase = await createClient();
 
-    // Verify the ID token is valid
-    const auth = adminAuth();
-    const decodedToken = await auth.verifyIdToken(idToken);
-    const uid = decodedToken.uid;
+    const { data: authData, error: authError } =
+      await supabase.auth.signInWithPassword({ email, password });
 
-    // Check user exists and is active in our users collection
-    const db = adminDb();
-    const userDoc = await db.collection("users").doc(uid).get();
-
-    if (!userDoc.exists) {
+    if (authError || !authData.user) {
       return NextResponse.json(
-        { success: false, error: "User account not found. Contact your administrator." },
+        { success: false, error: authError?.message ?? "Authentication failed" },
+        { status: 401 }
+      );
+    }
+
+    const { data: profile, error: profileError } = await supabaseAdmin()
+      .from("profiles")
+      .select("*")
+      .eq("id", authData.user.id)
+      .maybeSingle();
+
+    if (profileError || !profile) {
+      await supabase.auth.signOut();
+      return NextResponse.json(
+        {
+          success: false,
+          error: "User account not found. Contact your administrator.",
+        },
         { status: 403 }
       );
     }
 
-    const userData = userDoc.data()!;
-    if (userData.status === "disabled") {
+    if (profile.status === "disabled") {
+      await supabase.auth.signOut();
       return NextResponse.json(
-        { success: false, error: "Your account has been disabled. Contact your administrator." },
+        {
+          success: false,
+          error: "Your account has been disabled. Contact your administrator.",
+        },
         { status: 403 }
       );
     }
 
-    const user: AppUser = {
-      uid,
-      name: userData.name ?? "",
-      email: userData.email ?? decodedToken.email ?? "",
-      role: userData.role ?? "salesman",
-      country: userData.country,
-      poolCountries: userData.poolCountries ?? undefined,
-      activeProxyLimit: userData.activeProxyLimit ?? 4,
-      status: userData.status ?? "active",
-      createdAt:
-        userData.createdAt?.toDate?.()?.toISOString() ?? new Date().toISOString(),
-    };
+    const user = mapProfile(profile);
+    invalidateUserCache(user.uid);
 
-    // Create a session cookie
-    const sessionCookie = await createSessionCookie(idToken);
-    const profileCookie = signUserProfileCookie(user);
-
-    const response = NextResponse.json({
+    return NextResponse.json({
       success: true,
       data: {
-        uid,
+        uid: user.uid,
         role: user.role,
         name: user.name,
+        email: user.email,
+        activeProxyLimit: user.activeProxyLimit,
+        status: user.status,
+        createdAt: user.createdAt,
+        country: user.country,
+        poolCountries: user.poolCountries,
       },
     });
-
-    response.cookies.set(SESSION_COOKIE_NAME, sessionCookie, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60, // 7 days
-      path: "/",
-    });
-
-    if (profileCookie) {
-      response.cookies.set(
-        PROFILE_COOKIE_NAME,
-        profileCookie,
-        profileCookieOptions()
-      );
-    }
-
-    return response;
   } catch (error) {
     console.error("Login error:", error);
     return NextResponse.json(

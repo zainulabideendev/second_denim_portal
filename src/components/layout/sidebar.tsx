@@ -21,7 +21,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
 import { api } from "@/lib/api-client";
-import { getClientAuth } from "@/lib/firebase-client";
+import { createClient } from "@/utils/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
@@ -136,8 +136,8 @@ export function Sidebar() {
 
   async function handleLogout() {
     try {
-      await getClientAuth().signOut();
       await api.post("/api/auth/logout", {});
+      await createClient().auth.signOut();
       setAppUser(null);
       router.push("/login");
       router.refresh();
