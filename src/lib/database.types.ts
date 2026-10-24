@@ -341,6 +341,48 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["pool_config"]["Insert"]>;
         Relationships: [];
       };
+      sms_pva_orders: {
+        Row: {
+          id: string;
+          smspva_order_id: string;
+          user_id: string;
+          user_name: string;
+          user_email: string;
+          country: "FR" | "BE" | "UK" | "DE";
+          service: string;
+          service_name: string;
+          phone_number: string | null;
+          sms_code: string | null;
+          sms_text: string | null;
+          status: "waiting" | "received" | "expired" | "cancelled" | "failed";
+          error_message: string | null;
+          created_at: string;
+          code_received_at: string | null;
+          completed_at: string | null;
+          expires_at: string;
+        };
+        Insert: {
+          id?: string;
+          smspva_order_id: string;
+          user_id: string;
+          user_name?: string;
+          user_email?: string;
+          country: "FR" | "BE" | "UK" | "DE";
+          service?: string;
+          service_name?: string;
+          phone_number?: string | null;
+          sms_code?: string | null;
+          sms_text?: string | null;
+          status?: "waiting" | "received" | "expired" | "cancelled" | "failed";
+          error_message?: string | null;
+          created_at?: string;
+          code_received_at?: string | null;
+          completed_at?: string | null;
+          expires_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["sms_pva_orders"]["Insert"]>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;

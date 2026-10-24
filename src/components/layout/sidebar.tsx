@@ -17,6 +17,7 @@ import {
   Mail,
   Layers,
   BarChart3,
+  MessageSquare,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
@@ -71,6 +72,12 @@ export function Sidebar() {
       roles: ["salesman"],
     },
     {
+      href: "/get-number",
+      label: "Get number",
+      icon: MessageSquare,
+      roles: ["salesman"],
+    },
+    {
       href: "/requests/my",
       label: "My Requests",
       icon: ClipboardList,
@@ -86,6 +93,12 @@ export function Sidebar() {
       href: "/phone-numbers",
       label: "Phone Numbers",
       icon: Phone,
+      roles: ["admin", "manager"],
+    },
+    {
+      href: "/get-number",
+      label: "Get number",
+      icon: MessageSquare,
       roles: ["admin", "manager"],
     },
     {
