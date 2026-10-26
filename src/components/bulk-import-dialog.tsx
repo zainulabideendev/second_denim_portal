@@ -38,6 +38,8 @@ interface BulkImportDialogProps {
   type: ImportKind;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** When type is phone, force temporary or permanent on import */
+  numberType?: "temporary" | "permanent";
 }
 
 const TITLES: Record<ImportKind, string> = {
@@ -52,7 +54,12 @@ const QUERY_KEYS: Record<ImportKind, string> = {
   email: "emails",
 };
 
-export function BulkImportDialog({ type, open, onOpenChange }: BulkImportDialogProps) {
+export function BulkImportDialog({
+  type,
+  open,
+  onOpenChange,
+  numberType = "temporary",
+}: BulkImportDialogProps) {
   const [step, setStep] = useState<"input" | "preview">("input");
   const [rawText, setRawText] = useState("");
   const [fileName, setFileName] = useState("");
@@ -86,6 +93,7 @@ export function BulkImportDialog({ type, open, onOpenChange }: BulkImportDialogP
         return api.post<{ count: number }>("/api/phone-numbers/import", {
           rows: validRows,
           rawFileName: fileName || "import.csv",
+          numberType,
         });
       }
       return api.post<{ imported: number }>("/api/emails/import", { rows: validRows });
@@ -302,7 +310,15 @@ export function BulkImportDialog({ type, open, onOpenChange }: BulkImportDialogP
 }
 
 /** Toolbar button that opens the import dialog */
-export function BulkImportButton({ type, label }: { type: ImportKind; label?: string }) {
+export function BulkImportButton({
+  type,
+  label,
+  numberType,
+}: {
+  type: ImportKind;
+  label?: string;
+  numberType?: "temporary" | "permanent";
+}) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -310,7 +326,12 @@ export function BulkImportButton({ type, label }: { type: ImportKind; label?: st
         <FileUp className="h-3.5 w-3.5 mr-1.5" />
         {label ?? "Import CSV"}
       </Button>
-      <BulkImportDialog type={type} open={open} onOpenChange={setOpen} />
+      <BulkImportDialog
+        type={type}
+        open={open}
+        onOpenChange={setOpen}
+        numberType={numberType}
+      />
     </>
   );
 }

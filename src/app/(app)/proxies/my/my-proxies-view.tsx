@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ExpiryBadge } from "@/components/ui/expiry-badge";
+import { AcnLinkTimer } from "@/components/ui/acn-link-timer";
 import { CopyButton } from "@/components/ui/copy-button";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
@@ -19,7 +20,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   Shield, AlertTriangle, Eye, EyeOff, ArrowUpCircle,
-  ExternalLink, Mail, Link2, CheckCircle2, Lock, Layers, Phone,
+  ExternalLink, Mail, Link2, Lock, Layers, Phone,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate } from "@/lib/date-utils";
@@ -40,23 +41,24 @@ type LaneTab = "backup" | "active" | "banned";
 function ProxyRow({
   proxy,
   onDetails,
+  onMarkNumberChanged,
+  markingNumberChanged,
   children,
 }: {
   proxy: Proxy;
   onDetails: () => void;
+  onMarkNumberChanged?: (id: string) => void;
+  markingNumberChanged?: boolean;
   children?: React.ReactNode;
 }) {
   const [showPass, setShowPass] = useState(false);
-  const created = proxy.accountsCreated ?? proxy.stagingDone;
   const lane = normalizeLane(proxy.lane);
 
   const status = proxy.restricted
     ? { label: "Restricted", className: "bg-amber-50 text-amber-700 border-amber-200" }
     : lane === "active"
       ? { label: "Live", className: "bg-emerald-50 text-emerald-700 border-emerald-200" }
-      : created
-        ? { label: "Ready", className: "bg-emerald-50 text-emerald-700 border-emerald-200" }
-        : { label: "Setup needed", className: "bg-blue-50 text-blue-700 border-blue-200" };
+      : { label: "Backup", className: "bg-blue-50 text-blue-700 border-blue-200" };
 
   return (
     <article className="rounded-xl border border-border/70 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden">
@@ -112,6 +114,27 @@ function ProxyRow({
                 <CopyButton value={proxy.phoneNumber} />
               </div>
             )}
+            {proxy.accountCreationNumber && (
+              <div className="flex items-center gap-2 pt-1 border-t border-border/50">
+                <Phone className="h-3 w-3 text-blue-600" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                    Account creation number
+                  </p>
+                  <div className="flex items-center gap-1">
+                    <span className="font-mono text-xs truncate">
+                      {proxy.accountCreationNumber}
+                    </span>
+                    <CopyButton value={proxy.accountCreationNumber} />
+                  </div>
+                  <div className="mt-1.5">
+                    <AcnLinkTimer
+                      linkedAt={proxy.accountCreationNumberLinkedAt}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
@@ -125,6 +148,18 @@ function ProxyRow({
             <ExternalLink className="h-3 w-3 mr-1.5" />
             View details
           </Button>
+          {proxy.accountCreationNumber && onMarkNumberChanged && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full text-xs"
+                disabled={markingNumberChanged}
+                onClick={() => onMarkNumberChanged(proxy.id)}
+              >
+                <Phone className="h-3 w-3 mr-1.5" />
+                {markingNumberChanged ? "Updating…" : "Mark number changed"}
+              </Button>
+            )}
           {children}
         </div>
       </div>
@@ -189,15 +224,6 @@ export function MyProxiesView({ user }: { user: AppUser }) {
     onError: (err) => toast.error(err.message),
   });
 
-  const markCreatedMutation = useMutation({
-    mutationFn: (id: string) => api.post(`/api/proxies/${id}/mark-done`, {}),
-    onSuccess: () => {
-      toast.success("Account marked as created");
-      queryClient.invalidateQueries({ queryKey: ["my-proxies"] });
-    },
-    onError: (err) => toast.error(err.message),
-  });
-
   const restrictMutation = useMutation({
     mutationFn: (id: string) => api.post(`/api/proxies/${id}/restrict`, {}),
     onSuccess: () => {
@@ -237,23 +263,31 @@ export function MyProxiesView({ user }: { user: AppUser }) {
     onError: (err) => toast.error(err.message),
   });
 
+  const markNumberChangedMutation = useMutation({
+    mutationFn: (id: string) =>
+      api.post(`/api/proxies/${id}/mark-number-changed`, {}),
+    onSuccess: (_data, id) => {
+      toast.success("Number set to available — unlinked from this proxy");
+      setDetailProxy((prev) =>
+        prev?.id === id
+          ? {
+              ...prev,
+              accountCreationNumberId: null,
+              accountCreationNumber: null,
+              accountCreationNumberLinkedAt: null,
+              accountCreationNumberStatus: null,
+            }
+          : prev
+      );
+      queryClient.invalidateQueries({ queryKey: ["my-proxies"] });
+      queryClient.invalidateQueries({ queryKey: ["proxies"] });
+      queryClient.invalidateQueries({ queryKey: ["account-creation-numbers"] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
   const renderBackupActions = (proxy: Proxy) => {
     if (!countryPool) return null;
-    const created = proxy.accountsCreated ?? proxy.stagingDone;
-
-    if (!created) {
-      return (
-        <Button
-          size="sm"
-          className="w-full"
-          onClick={() => markCreatedMutation.mutate(proxy.id)}
-          disabled={markCreatedMutation.isPending}
-        >
-          <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
-          Mark created
-        </Button>
-      );
-    }
 
     if (countryPool.canPromote) {
       return (
@@ -401,11 +435,11 @@ export function MyProxiesView({ user }: { user: AppUser }) {
             steps={[
               {
                 label: "Backup",
-                detail: "Create Gmail + Vinted, then mark account created",
+                detail: "Set up Gmail + Vinted on backup proxies",
               },
               {
                 label: "Promote",
-                detail: "Move ready backups to active when a slot is free",
+                detail: "Move backups to active when a slot is free",
               },
               {
                 label: "Restrict",
@@ -462,6 +496,10 @@ export function MyProxiesView({ user }: { user: AppUser }) {
                     key={proxy.id}
                     proxy={proxy}
                     onDetails={() => setDetailProxy(proxy)}
+                    onMarkNumberChanged={(id) =>
+                      markNumberChangedMutation.mutate(id)
+                    }
+                    markingNumberChanged={markNumberChangedMutation.isPending}
                   >
                     {renderBackupActions(proxy)}
                   </ProxyRow>
@@ -486,6 +524,10 @@ export function MyProxiesView({ user }: { user: AppUser }) {
                     key={proxy.id}
                     proxy={proxy}
                     onDetails={() => setDetailProxy(proxy)}
+                    onMarkNumberChanged={(id) =>
+                      markNumberChangedMutation.mutate(id)
+                    }
+                    markingNumberChanged={markNumberChangedMutation.isPending}
                   >
                     {renderActiveActions(proxy)}
                   </ProxyRow>

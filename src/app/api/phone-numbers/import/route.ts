@@ -22,6 +22,7 @@ const phoneRowSchema = z.object({
 const importBodySchema = z.object({
   rows: z.array(phoneRowSchema).min(1).max(500),
   rawFileName: z.string().default("manual-paste"),
+  numberType: z.enum(["temporary", "permanent"]).optional().default("temporary"),
 });
 
 export async function POST(request: NextRequest) {
@@ -38,7 +39,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { rows, rawFileName } = parsed.data;
+    const { rows, rawFileName, numberType } = parsed.data;
 
     const { data: batch, error: batchError } = await supabaseAdmin()
       .from("import_batches")
@@ -66,6 +67,7 @@ export async function POST(request: NextRequest) {
           provider: row.provider,
           purchased_at: new Date(row.purchasedAt).toISOString(),
           expires_at: new Date(row.expiresAt).toISOString(),
+          number_type: numberType,
           status: "available" as const,
           assigned_to: null,
           assigned_at: null,

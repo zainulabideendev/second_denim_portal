@@ -71,6 +71,9 @@ export type Database = {
           vinted_password: string;
           phone_id: string | null;
           phone_number: string | null;
+          account_creation_number_id: string | null;
+          account_creation_number: string | null;
+          account_creation_number_linked_at: string | null;
           created_at: string;
         };
         Insert: {
@@ -101,6 +104,9 @@ export type Database = {
           vinted_password?: string;
           phone_id?: string | null;
           phone_number?: string | null;
+          account_creation_number_id?: string | null;
+          account_creation_number?: string | null;
+          account_creation_number_linked_at?: string | null;
           created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["proxies"]["Insert"]>;
@@ -339,6 +345,44 @@ export type Database = {
           updated_by?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["pool_config"]["Insert"]>;
+        Relationships: [];
+      };
+      account_creation_numbers: {
+        Row: {
+          id: string;
+          country: "FR" | "BE" | "UK" | "DE";
+          number: string;
+          provider: string;
+          status: "available" | "assigned" | "changed" | "retired";
+          assigned_to: string | null;
+          assigned_at: string | null;
+          notes: string;
+          proxy_id: string | null;
+          proxy_host: string | null;
+          proxy_port: string | null;
+          proxy_country: "FR" | "BE" | "UK" | "DE" | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          country: "FR" | "BE" | "UK" | "DE";
+          number: string;
+          provider?: string;
+          status?: "available" | "assigned" | "changed" | "retired";
+          assigned_to?: string | null;
+          assigned_at?: string | null;
+          notes?: string;
+          proxy_id?: string | null;
+          proxy_host?: string | null;
+          proxy_port?: string | null;
+          proxy_country?: "FR" | "BE" | "UK" | "DE" | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["account_creation_numbers"]["Insert"]
+        >;
         Relationships: [];
       };
       sms_pva_orders: {

@@ -18,6 +18,7 @@ import {
   Layers,
   BarChart3,
   MessageSquare,
+  UserPlus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
@@ -93,6 +94,12 @@ export function Sidebar() {
       href: "/phone-numbers",
       label: "Phone Numbers",
       icon: Phone,
+      roles: ["admin", "manager"],
+    },
+    {
+      href: "/account-creation-numbers",
+      label: "Account creation numbers",
+      icon: UserPlus,
       roles: ["admin", "manager"],
     },
     {

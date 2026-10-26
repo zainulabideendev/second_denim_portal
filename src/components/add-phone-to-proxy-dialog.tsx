@@ -75,6 +75,7 @@ export function AddPhoneToProxyDialog({ proxy, onClose, onSaved }: AddPhoneToPro
       toast.success(`Phone added to proxy: ${data.number}`);
       queryClient.invalidateQueries({ queryKey: ["proxies"] });
       queryClient.invalidateQueries({ queryKey: ["phones"] });
+      queryClient.invalidateQueries({ queryKey: ["my-phones"] });
       queryClient.invalidateQueries({ queryKey: ["my-proxies"] });
       onSaved?.(data);
       resetAndClose();

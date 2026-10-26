@@ -23,14 +23,15 @@ const bodySchema = z.object({
 });
 
 /**
- * Admin/manager: create a phone number and link it to this proxy.
+ * Create a phone number (temporary or permanent) and link it to this proxy.
+ * Salesmen may only add phones to proxies assigned to them.
  */
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const actor = await requireAuth(["admin", "manager"]);
+    const actor = await requireAuth(["admin", "manager", "salesman"]);
     const { id: proxyId } = await params;
     const body = await request.json();
     const parsed = bodySchema.safeParse(body);
@@ -55,6 +56,16 @@ export async function POST(
       return NextResponse.json(
         { success: false, error: "Proxy not found" },
         { status: 404 }
+      );
+    }
+
+    if (actor.role === "salesman" && proxyData.assigned_to !== actor.uid) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "You can only add phone numbers to your assigned proxies.",
+        },
+        { status: 403 }
       );
     }
 
@@ -111,7 +122,7 @@ export async function POST(
         status: assignedTo ? "active" : "available",
         assigned_to: assignedTo,
         assigned_at: assignedAt,
-        batch_id: "",
+        batch_id: null,
         notes: parsed.data.notes ?? "",
         proxy_id: proxyId,
         ...phoneProxySnapshotFields(proxyData),

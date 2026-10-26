@@ -151,6 +151,19 @@ export interface Proxy {
   phoneNumber?: string | null;
   /** Populated phone summary */
   phone?: Pick<PhoneNumber, "id" | "number"> | null;
+  /** Linked account-creation number id (permanent stock) */
+  accountCreationNumberId?: string | null;
+  /** Denormalized account-creation number string */
+  accountCreationNumber?: string | null;
+  /** When the account-creation number was linked (24h timer) */
+  accountCreationNumberLinkedAt?: string | null;
+  /** Status of linked account-creation number when loaded */
+  accountCreationNumberStatus?:
+    | "available"
+    | "assigned"
+    | "changed"
+    | "retired"
+    | null;
 }
 
 export interface ProxyWithUser extends Proxy {
@@ -267,6 +280,14 @@ export type AuditAction =
   | "phone.expired"
   | "phone.retired"
   | "phone.imported"
+  | "account_creation_number.created"
+  | "account_creation_number.imported"
+  | "account_creation_number.assigned"
+  | "account_creation_number.revoked"
+  | "account_creation_number.retired"
+  | "account_creation_number.linked"
+  | "account_creation_number.changed"
+  | "account_creation_number.updated"
   | "request.created"
   | "request.approved"
   | "request.rejected"

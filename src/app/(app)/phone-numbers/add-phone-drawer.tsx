@@ -27,6 +27,10 @@ interface AddPhoneDrawerProps {
   onClose: () => void;
   defaultProxyId?: string;
   isSalesman?: boolean;
+  /** Lock number type (hides selector). Use "permanent" for account-creation stock. */
+  forcedNumberType?: PhoneNumberType;
+  /** Allow saving without assigning a user (permanent stock). */
+  allowUnassigned?: boolean;
 }
 
 function todayIso() {
@@ -44,6 +48,8 @@ export function AddPhoneDrawer({
   onClose,
   defaultProxyId,
   isSalesman: isSalesmanProp,
+  forcedNumberType,
+  allowUnassigned = false,
 }: AddPhoneDrawerProps) {
   const queryClient = useQueryClient();
   const { appUser } = useAuth();
@@ -52,7 +58,9 @@ export function AddPhoneDrawer({
   const [assignedTo, setAssignedTo] = useState("");
   const [proxyId, setProxyId] = useState(defaultProxyId ?? "");
   const [status, setStatus] = useState<PhoneAccountStatus>("active");
-  const [numberType, setNumberType] = useState<PhoneNumberType>("temporary");
+  const [numberType, setNumberType] = useState<PhoneNumberType>(
+    forcedNumberType ?? "temporary"
+  );
   const [number, setNumber] = useState("");
   const [country, setCountry] = useState<Country>("UK");
   const [provider, setProvider] = useState("");
@@ -132,7 +140,7 @@ export function AddPhoneDrawer({
       setProxySearch("");
       setProxyDropdownOpen(false);
       setStatus("active");
-      setNumberType("temporary");
+      setNumberType(forcedNumberType ?? "temporary");
       setNumber("");
       setCountry("UK");
       setProvider("");
@@ -140,7 +148,7 @@ export function AddPhoneDrawer({
       setExpiresAt(oneMonthFromTodayIso());
       setNotes("");
     }
-  }, [open, defaultProxyId]);
+  }, [open, defaultProxyId, forcedNumberType]);
 
   // Handle proxy selection and auto-set country
   const handleSelectProxy = (selectedId: string | null) => {
@@ -159,10 +167,12 @@ export function AddPhoneDrawer({
   const createMutation = useMutation({
     mutationFn: () =>
       api.post<PhoneNumber>("/api/phone-numbers", {
-        assignedTo: isSalesman ? (appUser?.uid ?? "") : assignedTo,
+        assignedTo: isSalesman
+          ? (appUser?.uid ?? "")
+          : assignedTo || undefined,
         proxyId: proxyId || null,
         status,
-        numberType,
+        numberType: forcedNumberType ?? numberType,
         number: number.trim(),
         country,
         provider: provider.trim(),
@@ -184,7 +194,9 @@ export function AddPhoneDrawer({
   });
 
   const canSubmit =
-    (isSalesman ? proxyId.length > 0 : assignedTo.length > 0) &&
+    (isSalesman
+      ? proxyId.length > 0
+      : allowUnassigned || assignedTo.length > 0) &&
     number.trim().length > 0 &&
     provider.trim().length > 0 &&
     purchasedAt.length > 0 &&
@@ -196,12 +208,16 @@ export function AddPhoneDrawer({
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
             <Plus className="h-4 w-4" />
-            Add phone number
+            {forcedNumberType === "permanent"
+              ? "Add account creation number"
+              : "Add phone number"}
           </SheetTitle>
           <SheetDescription>
             {isSalesman
               ? "Select the proxy for which this number was purchased and enter its details."
-              : "Assign the number to a user and optionally link it to a proxy."}
+              : allowUnassigned
+                ? "Add a permanent number to account-creation stock. Assignment is optional."
+                : "Assign the number to a user and optionally link it to a proxy."}
           </SheetDescription>
         </SheetHeader>
 
@@ -260,11 +276,17 @@ export function AddPhoneDrawer({
             /* Admin/Manager: User selector is required */
             <>
               <div className="space-y-1.5">
-                <Label>Assigned to <span className="text-destructive">*</span></Label>
+                <Label>
+                  Assigned to{" "}
+                  {!allowUnassigned && (
+                    <span className="text-destructive">*</span>
+                  )}
+                </Label>
                 <Select
-                  value={assignedTo}
+                  value={assignedTo || "unassigned"}
                   onValueChange={(v) => {
-                    setAssignedTo(v ?? "");
+                    const next = !v || v === "unassigned" ? "" : v;
+                    setAssignedTo(next);
                     setProxyId("");
                   }}
                 >
@@ -272,6 +294,11 @@ export function AddPhoneDrawer({
                     <SelectValue placeholder="Select user…" />
                   </SelectTrigger>
                   <SelectContent className="w-[var(--anchor-width)] min-w-[280px]">
+                    {allowUnassigned && (
+                      <SelectItem value="unassigned">
+                        Unassigned (stock)
+                      </SelectItem>
+                    )}
                     {assignableUsers.map((user) => (
                       <SelectItem key={user.uid} value={user.uid}>
                         {user.name} ({user.role})
@@ -334,18 +361,30 @@ export function AddPhoneDrawer({
             </Select>
           </div>
 
-          <div className="space-y-1.5">
-            <Label>Number Type</Label>
-            <Select value={numberType} onValueChange={(v) => setNumberType(v as PhoneNumberType)}>
-              <SelectTrigger className="h-9 w-full">
-                <SelectValue placeholder="Select type…" />
-              </SelectTrigger>
-              <SelectContent className="w-[var(--anchor-width)] min-w-[160px]">
-                <SelectItem value="temporary">Temporary</SelectItem>
-                <SelectItem value="permanent">Permanent</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          {forcedNumberType ? (
+            <div className="space-y-1.5">
+              <Label>Number type</Label>
+              <div className="flex h-9 items-center rounded-md border bg-muted/30 px-3 text-sm capitalize">
+                {forcedNumberType}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              <Label>Number Type</Label>
+              <Select
+                value={numberType}
+                onValueChange={(v) => setNumberType(v as PhoneNumberType)}
+              >
+                <SelectTrigger className="h-9 w-full">
+                  <SelectValue placeholder="Select type…" />
+                </SelectTrigger>
+                <SelectContent className="w-[var(--anchor-width)] min-w-[160px]">
+                  <SelectItem value="temporary">Temporary</SelectItem>
+                  <SelectItem value="permanent">Permanent</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <Label htmlFor="phone-number">Number <span className="text-destructive">*</span></Label>

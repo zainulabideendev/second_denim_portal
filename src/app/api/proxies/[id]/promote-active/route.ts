@@ -57,16 +57,6 @@ export async function POST(
       );
     }
 
-    if (!proxyData.accounts_created && !proxyData.staging_done) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Mark accounts as created before moving to active",
-        },
-        { status: 400 }
-      );
-    }
-
     const ownerUid = proxyData.assigned_to as string;
     const country = proxyData.country as Country;
 

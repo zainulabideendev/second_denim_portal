@@ -73,6 +73,49 @@ export async function enrichProxiesWithSyncedEmails<
   }));
 }
 
+/** Attach account-creation number status for salesman UI. */
+export async function enrichProxiesWithAcnStatus<
+  T extends {
+    accountCreationNumberId?: string | null;
+    accountCreationNumberStatus?:
+      | "available"
+      | "assigned"
+      | "changed"
+      | "retired"
+      | null;
+  }
+>(proxies: T[]) {
+  const ids = [
+    ...new Set(
+      proxies
+        .map((p) => p.accountCreationNumberId)
+        .filter((id): id is string => !!id)
+    ),
+  ];
+  if (!ids.length) return proxies;
+
+  const { data } = await supabaseAdmin()
+    .from("account_creation_numbers")
+    .select("id, status")
+    .in("id", ids);
+
+  const statusMap = new Map(
+    (data ?? []).map((d) => [d.id, d.status] as const)
+  );
+
+  return proxies.map((p) => ({
+    ...p,
+    accountCreationNumberStatus: p.accountCreationNumberId
+      ? (statusMap.get(p.accountCreationNumberId) as
+          | "available"
+          | "assigned"
+          | "changed"
+          | "retired"
+          | undefined) ?? p.accountCreationNumberStatus ?? null
+      : null,
+  }));
+}
+
 export async function enrichEmailsWithSyncedProxies<
   T extends {
     id: string;

@@ -57,6 +57,10 @@ export function mapProxy(row: ProxyRow): Proxy {
     vintedPassword: row.vinted_password,
     phoneId: row.phone_id,
     phoneNumber: row.phone_number,
+    accountCreationNumberId: row.account_creation_number_id ?? null,
+    accountCreationNumber: row.account_creation_number ?? null,
+    accountCreationNumberLinkedAt:
+      row.account_creation_number_linked_at ?? null,
   };
 }
 

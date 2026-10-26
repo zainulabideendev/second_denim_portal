@@ -39,11 +39,15 @@ export async function GET(request: NextRequest) {
     const country = searchParams.get("country");
     const status = searchParams.get("status");
     const assignedTo = searchParams.get("assignedTo");
+    const numberType = searchParams.get("numberType");
 
     let query = supabaseAdmin().from("phone_numbers").select("*").limit(500);
     if (assignedTo) query = query.eq("assigned_to", assignedTo);
     else if (country)
       query = query.eq("country", country as "FR" | "BE" | "UK" | "DE");
+    if (numberType === "temporary" || numberType === "permanent") {
+      query = query.eq("number_type", numberType);
+    }
 
     const { data, error } = await query;
     if (error) throw new Error(error.message);
@@ -53,6 +57,12 @@ export async function GET(request: NextRequest) {
     if (country && assignedTo)
       phones = phones.filter((p) => p.country === country);
     if (status) phones = phones.filter((p) => p.status === status);
+    if (numberType === "temporary") {
+      // Treat missing/null type as temporary for older rows
+      phones = phones.filter((p) => (p.numberType ?? "temporary") === "temporary");
+    } else if (numberType === "permanent") {
+      phones = phones.filter((p) => p.numberType === "permanent");
+    }
 
     phones.sort((a, b) => b.purchasedAt.localeCompare(a.purchasedAt));
 
@@ -90,7 +100,9 @@ export async function POST(request: NextRequest) {
       numberType,
     } = parsed.data;
 
-    let targetUserId = actor.uid;
+    const isPermanent = (numberType ?? "temporary") === "permanent";
+    let targetUserId: string | null = actor.uid;
+
     if (actor.role === "salesman") {
       targetUserId = actor.uid;
       if (!proxyId) {
@@ -102,27 +114,31 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         );
       }
-    } else {
-      if (!assignedTo) {
-        return NextResponse.json(
-          { success: false, error: "Assigned user is required." },
-          { status: 400 }
-        );
-      }
+    } else if (assignedTo) {
       targetUserId = assignedTo;
+    } else if (isPermanent) {
+      // Account-creation stock can sit unassigned until needed
+      targetUserId = null;
+    } else {
+      return NextResponse.json(
+        { success: false, error: "Assigned user is required." },
+        { status: 400 }
+      );
     }
 
-    const { data: userDoc } = await supabaseAdmin()
-      .from("profiles")
-      .select("id")
-      .eq("id", targetUserId)
-      .maybeSingle();
+    if (targetUserId) {
+      const { data: userDoc } = await supabaseAdmin()
+        .from("profiles")
+        .select("id")
+        .eq("id", targetUserId)
+        .maybeSingle();
 
-    if (!userDoc) {
-      return NextResponse.json(
-        { success: false, error: "Assigned user not found." },
-        { status: 404 }
-      );
+      if (!userDoc) {
+        return NextResponse.json(
+          { success: false, error: "Assigned user not found." },
+          { status: 404 }
+        );
+      }
     }
 
     let proxyData: {
@@ -174,8 +190,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const assignedAt = new Date().toISOString();
-    const phoneStatus = status ?? "active";
+    const assignedAt = targetUserId ? new Date().toISOString() : null;
+    const phoneStatus =
+      targetUserId == null
+        ? "available"
+        : (status ?? (isPermanent ? "available" : "active"));
 
     const { data: created, error: insertError } = await supabaseAdmin()
       .from("phone_numbers")
@@ -189,7 +208,7 @@ export async function POST(request: NextRequest) {
         status: phoneStatus,
         assigned_to: targetUserId,
         assigned_at: assignedAt,
-        batch_id: "",
+        batch_id: null,
         notes: notes ?? "",
         proxy_id: proxyId || null,
         ...phoneProxySnapshotFields(proxyData),

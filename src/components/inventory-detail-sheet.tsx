@@ -27,12 +27,18 @@ import {
 import { useAuth } from "@/contexts/auth-context";
 import { AddGmailDialog } from "@/components/add-gmail-dialog";
 import { AddPhoneToProxyDialog } from "@/components/add-phone-to-proxy-dialog";
+import { LinkAcnToProxyDialog } from "@/components/link-acn-to-proxy-dialog";
 import { SyncEmailDialog } from "@/components/sync-dialogs";
 import { formatDate } from "@/lib/date-utils";
 import { cn } from "@/lib/utils";
 import { normalizeLane } from "@/lib/pool-utils";
-import { Eye, EyeOff, Link2, Link2Off, Mail, Pencil, Phone } from "lucide-react";
+import { Copy, Eye, EyeOff, Link2, Link2Off, Mail, Pencil, Phone, RefreshCw, UserPlus } from "lucide-react";
+import { AcnLinkTimer } from "@/components/ui/acn-link-timer";
 import { toast } from "sonner";
+
+function proxyCredentialsString(p: Pick<Proxy, "host" | "port" | "username" | "password">) {
+  return `${p.host}:${p.port}:${p.username}:${p.password}`;
+}
 
 function DetailRow({
   label,
@@ -102,6 +108,17 @@ export function ProxyDetailSheet({
   const canChangeCountry = appUser?.role === "admin";
   const canManageLinks =
     appUser?.role === "admin" || appUser?.role === "manager";
+  const canAddPhone =
+    canManageLinks ||
+    (appUser?.role === "salesman" &&
+      !!proxy?.assignedTo &&
+      proxy.assignedTo === appUser.uid);
+  const canMarkNumberChanged =
+    appUser?.role === "admin" ||
+    appUser?.role === "manager" ||
+    (appUser?.role === "salesman" &&
+      !!proxy?.assignedTo &&
+      proxy.assignedTo === appUser.uid);
   const [editing, setEditing] = useState(false);
   const [host, setHost] = useState("");
   const [port, setPort] = useState("");
@@ -115,6 +132,7 @@ export function ProxyDetailSheet({
   const [addGmailOpen, setAddGmailOpen] = useState(false);
   const [syncEmailOpen, setSyncEmailOpen] = useState(false);
   const [addPhoneOpen, setAddPhoneOpen] = useState(false);
+  const [linkAcnOpen, setLinkAcnOpen] = useState(false);
   const queryClient = useQueryClient();
   const view = proxy ? { ...proxy, ...saved } : null;
 
@@ -131,6 +149,7 @@ export function ProxyDetailSheet({
       setAddGmailOpen(false);
       setSyncEmailOpen(false);
       setAddPhoneOpen(false);
+      setLinkAcnOpen(false);
       return;
     }
     setHost(proxy.host);
@@ -181,12 +200,65 @@ export function ProxyDetailSheet({
     onError: (err: Error) => toast.error(err.message),
   });
 
+  const markNumberChangedMutation = useMutation({
+    mutationFn: () =>
+      api.post<{
+        proxyId: string;
+        accountCreationNumberId: string;
+        number: string | null;
+        status: string;
+      }>(`/api/proxies/${proxy!.id}/mark-number-changed`, {}),
+    onSuccess: () => {
+      toast.success("Number set to available — unlinked from this proxy");
+      setSaved((prev) => ({
+        ...(view ?? {}),
+        ...prev,
+        accountCreationNumberId: null,
+        accountCreationNumber: null,
+        accountCreationNumberStatus: null,
+      }));
+      queryClient.invalidateQueries({ queryKey: ["proxies"] });
+      queryClient.invalidateQueries({ queryKey: ["my-proxies"] });
+      queryClient.invalidateQueries({ queryKey: ["account-creation-numbers"] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
   const canSave =
     host.trim().length > 0 &&
     port.trim().length > 0 &&
     username.trim().length > 0 &&
     password.length > 0 &&
     !mutation.isPending;
+
+  const salesmanPhoneActions = canAddPhone && !canManageLinks && view && (
+    <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-3">
+      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+        Phone number
+      </p>
+      <div className="text-sm">
+        {view.phoneNumber ? (
+          <p className="font-mono text-xs truncate">{view.phoneNumber}</p>
+        ) : (
+          <p className="text-xs text-muted-foreground">No phone linked</p>
+        )}
+      </div>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-8 text-xs"
+        onClick={() => setAddPhoneOpen(true)}
+      >
+        <Phone className="h-3.5 w-3.5 mr-1.5" />
+        {view.phoneNumber ? "Replace phone" : "Add phone"}
+      </Button>
+      <p className="text-[11px] text-muted-foreground">
+        Add a temporary or permanent number. It will appear under Phone numbers
+        and link to this proxy.
+      </p>
+    </div>
+  );
 
   const linkActions = canManageLinks && view && (
     <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-3">
@@ -209,6 +281,18 @@ export function ProxyDetailSheet({
             <p className="text-xs text-muted-foreground">Phone</p>
             {view.phoneNumber ? (
               <p className="font-mono text-xs truncate">{view.phoneNumber}</p>
+            ) : (
+              <p className="text-xs text-muted-foreground">Not linked</p>
+            )}
+          </div>
+        </div>
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-xs text-muted-foreground">Account creation number</p>
+            {view.accountCreationNumber ? (
+              <p className="font-mono text-xs truncate">
+                {view.accountCreationNumber}
+              </p>
             ) : (
               <p className="text-xs text-muted-foreground">Not linked</p>
             )}
@@ -245,6 +329,18 @@ export function ProxyDetailSheet({
         >
           <Phone className="h-3.5 w-3.5 mr-1.5" />
           Add phone
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 text-xs"
+          onClick={() => setLinkAcnOpen(true)}
+        >
+          <UserPlus className="h-3.5 w-3.5 mr-1.5" />
+          {view.accountCreationNumber
+            ? "Change creation number"
+            : "Link creation number"}
         </Button>
       </div>
     </div>
@@ -322,6 +418,7 @@ export function ProxyDetailSheet({
                   />
                 </div>
                 {linkActions}
+                {salesmanPhoneActions}
                 <div className="space-y-1.5">
                   <Label htmlFor="proxy-notes">Notes</Label>
                   <Textarea
@@ -352,12 +449,26 @@ export function ProxyDetailSheet({
             <DetailRow label="Password">
               <SecretValue value={view.password} />
             </DetailRow>
-            <DetailRow label="Full string">
-              <div className="flex items-center gap-1">
-                <CopyButton
-                  value={`${view.host}:${view.port}:${view.username}:${view.password}`}
-                />
-                <span className="text-xs text-muted-foreground">Copy credentials</span>
+            <DetailRow label="Proxy details">
+              <div className="space-y-2">
+                <p className="font-mono text-[10px] text-muted-foreground break-all">
+                  {view.host}:{view.port}:{view.username}:••••••••
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs"
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(
+                      proxyCredentialsString(view)
+                    );
+                    toast.success("Proxy details copied");
+                  }}
+                >
+                  <Copy className="h-3.5 w-3.5 mr-1.5" />
+                  Copy proxy details
+                </Button>
               </div>
             </DetailRow>
             <Separator className="my-2" />
@@ -437,6 +548,40 @@ export function ProxyDetailSheet({
                 <span className="text-muted-foreground">—</span>
               )}
             </DetailRow>
+            <DetailRow label="Creation number">
+              {view.accountCreationNumber ? (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-1 font-mono text-xs">
+                    <span className="break-all">{view.accountCreationNumber}</span>
+                    <CopyButton value={view.accountCreationNumber} />
+                  </div>
+                  <AcnLinkTimer
+                    linkedAt={view.accountCreationNumberLinkedAt}
+                  />
+                  {canMarkNumberChanged && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 text-xs"
+                      disabled={markNumberChangedMutation.isPending}
+                      onClick={() => markNumberChangedMutation.mutate()}
+                    >
+                      <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                      {markNumberChangedMutation.isPending
+                        ? "Updating…"
+                        : "Mark number changed"}
+                    </Button>
+                  )}
+                  <p className="text-[11px] text-muted-foreground">
+                    After you change this number on the Vinted account, mark it
+                    so it becomes available for another proxy.
+                  </p>
+                </div>
+              ) : (
+                <span className="text-muted-foreground">—</span>
+              )}
+            </DetailRow>
             {canManageLinks && (
               <div className="py-2">{linkActions}</div>
             )}
@@ -459,7 +604,7 @@ export function ProxyDetailSheet({
             )}
           </SheetBody>
         )}
-        {proxy && editable && (
+        {proxy && view && (
           <SheetFooter>
             {editing ? (
               <>
@@ -471,10 +616,27 @@ export function ProxyDetailSheet({
                 </Button>
               </>
             ) : (
-              <Button variant="outline" onClick={() => setEditing(true)}>
-                <Pencil className="h-3.5 w-3.5 mr-1.5" />
-                Edit details
-              </Button>
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(
+                      proxyCredentialsString(view)
+                    );
+                    toast.success("Proxy details copied");
+                  }}
+                >
+                  <Copy className="h-3.5 w-3.5 mr-1.5" />
+                  Copy proxy details
+                </Button>
+                {editable && (
+                  <Button variant="outline" onClick={() => setEditing(true)}>
+                    <Pencil className="h-3.5 w-3.5 mr-1.5" />
+                    Edit details
+                  </Button>
+                )}
+              </>
             )}
           </SheetFooter>
         )}
@@ -508,20 +670,40 @@ export function ProxyDetailSheet({
             void refreshFromList();
           }}
         />
-        <AddPhoneToProxyDialog
-          proxy={addPhoneOpen ? view : null}
-          onClose={() => setAddPhoneOpen(false)}
+        <LinkAcnToProxyDialog
+          proxy={linkAcnOpen ? view : null}
+          onClose={() => setLinkAcnOpen(false)}
           onSaved={async (data) => {
             setSaved((prev) => ({
               ...(view ?? {}),
               ...prev,
-              phoneId: data.phoneId,
-              phoneNumber: data.number,
+              accountCreationNumberId: data.accountCreationNumberId,
+              accountCreationNumber: data.number,
+              accountCreationNumberLinkedAt: data.linkedAt ?? new Date().toISOString(),
             }));
             await refreshFromList();
           }}
         />
       </>
+    )}
+    {canAddPhone && (
+      <AddPhoneToProxyDialog
+        proxy={addPhoneOpen ? view : null}
+        onClose={() => setAddPhoneOpen(false)}
+        onSaved={async (data) => {
+          setSaved((prev) => ({
+            ...(view ?? {}),
+            ...prev,
+            phoneId: data.phoneId,
+            phoneNumber: data.number,
+          }));
+          if (canManageLinks) await refreshFromList();
+          else {
+            queryClient.invalidateQueries({ queryKey: ["my-proxies"] });
+            queryClient.invalidateQueries({ queryKey: ["phones"] });
+          }
+        }}
+      />
     )}
     </>
   );

@@ -11,7 +11,7 @@ export async function writeAuditLog({
 }: {
   actorUid: string;
   action: AuditAction;
-  targetType: "proxy" | "phone" | "request" | "user";
+  targetType: "proxy" | "phone" | "request" | "user" | "account_creation_number";
   targetId: string;
   metadata?: Record<string, unknown>;
 }) {

@@ -78,6 +78,18 @@ export async function POST(
 
     if (error) throw new Error(error.message);
 
+    if (proxyDoc.account_creation_number_id) {
+      await supabaseAdmin()
+        .from("account_creation_numbers")
+        .update({
+          assigned_to: assignedTo,
+          assigned_at: now.toISOString(),
+          status: "assigned",
+          updated_at: now.toISOString(),
+        })
+        .eq("id", proxyDoc.account_creation_number_id);
+    }
+
     await writeAuditLog({
       actorUid: actor.uid,
       action: "proxy.assigned",

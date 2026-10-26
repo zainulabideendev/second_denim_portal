@@ -4,6 +4,7 @@ import { requireAuth, handleAuthError } from "@/lib/auth";
 import type { Country, Proxy } from "@/lib/types";
 import { POOL_LANES } from "@/lib/types";
 import {
+  enrichProxiesWithAcnStatus,
   enrichProxiesWithSyncedEmails,
   mapProxyDoc,
 } from "@/lib/sync-enrich";
@@ -49,7 +50,8 @@ export async function GET() {
 
     const poolCountries = assignments.map((a) => a.country);
     const allProxies = (data ?? []).map(mapProxyDoc);
-    const enriched = await enrichProxiesWithSyncedEmails(allProxies);
+    const withEmail = await enrichProxiesWithSyncedEmails(allProxies);
+    const enriched = await enrichProxiesWithAcnStatus(withEmail);
 
     const pools: Partial<Record<Country, CountryPoolLanes>> = {};
     for (const country of poolCountries) {

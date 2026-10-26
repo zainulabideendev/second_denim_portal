@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { Mail } from "lucide-react";
 
@@ -27,20 +28,30 @@ interface AddGmailDialogProps {
 export function AddGmailDialog({ proxy, onClose, onSaved }: AddGmailDialogProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [recoveryPhrase, setRecoveryPhrase] = useState("");
   const queryClient = useQueryClient();
 
   function resetAndClose() {
     setEmail("");
     setPassword("");
+    setRecoveryPhrase("");
     onClose();
   }
 
   const mutation = useMutation({
-    mutationFn: () =>
-      api.post<{ emailId: string; proxyId: string; email: string; synced: boolean }>(
-        `/api/proxies/${proxy!.id}/add-gmail`,
-        { email: email.trim(), password }
-      ),
+    mutationFn: () => {
+      const phrase = recoveryPhrase.trim();
+      return api.post<{
+        emailId: string;
+        proxyId: string;
+        email: string;
+        synced: boolean;
+      }>(`/api/proxies/${proxy!.id}/add-gmail`, {
+        email: email.trim(),
+        password,
+        notes: phrase ? `Recovery phrase: ${phrase}` : "",
+      });
+    },
     onSuccess: (data) => {
       toast.success(`Gmail saved and synced: ${data.email}`);
       queryClient.invalidateQueries({ queryKey: ["proxies"] });
@@ -99,6 +110,20 @@ export function AddGmailDialog({ proxy, onClose, onSaved }: AddGmailDialogProps)
               placeholder="Password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              autoComplete="off"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="add-gmail-recovery">
+              Recovery phrase{" "}
+              <span className="text-muted-foreground font-normal">(optional)</span>
+            </Label>
+            <Textarea
+              id="add-gmail-recovery"
+              placeholder="word1 word2 word3 …"
+              value={recoveryPhrase}
+              onChange={(e) => setRecoveryPhrase(e.target.value)}
+              rows={3}
               autoComplete="off"
             />
           </div>

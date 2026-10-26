@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { ExpiryBadge } from "@/components/ui/expiry-badge";
+import { AcnLinkTimer } from "@/components/ui/acn-link-timer";
 import { CountryBadge } from "@/components/ui/country-badge";
 import { CopyButton } from "@/components/ui/copy-button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -240,8 +241,8 @@ export function ProxyInventoryTable({ defaultUser }: { defaultUser?: string }) {
         </div>
       </div>
 
-      <div className="rounded-lg border border-border overflow-hidden">
-        <Table>
+      <div className="rounded-lg border border-border overflow-x-auto">
+        <Table className="min-w-[1100px]">
           <TableHeader>
             <TableRow className="bg-muted/40">
               <TableHead>Country</TableHead>
@@ -251,6 +252,8 @@ export function ProxyInventoryTable({ defaultUser }: { defaultUser?: string }) {
               <TableHead>Lane</TableHead>
               <TableHead>Assigned To</TableHead>
               <TableHead>Email Sync</TableHead>
+              <TableHead className="whitespace-nowrap">Creation #</TableHead>
+              <TableHead className="whitespace-nowrap">24h timer</TableHead>
               <TableHead>Purchased</TableHead>
               <TableHead>Expires</TableHead>
               <TableHead className="w-10" />
@@ -297,21 +300,21 @@ export function ProxyInventoryTable({ defaultUser }: { defaultUser?: string }) {
                   options={SYNC_OPTIONS}
                 />
               </TableHead>
-              <TableHead colSpan={3} />
+              <TableHead colSpan={5} />
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
               Array.from({ length: 6 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 10 }).map((_, j) => (
+                  {Array.from({ length: 12 }).map((_, j) => (
                     <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                   ))}
                 </TableRow>
               ))
             ) : isError ? (
               <TableRow>
-                <TableCell colSpan={10} className="h-48 text-center">
+                <TableCell colSpan={12} className="h-48 text-center">
                   <EmptyState
                     icon={Shield}
                     title="Failed to load proxies"
@@ -326,7 +329,7 @@ export function ProxyInventoryTable({ defaultUser }: { defaultUser?: string }) {
               </TableRow>
             ) : !paginated.length ? (
               <TableRow>
-                <TableCell colSpan={10} className="h-48 text-center">
+                <TableCell colSpan={12} className="h-48 text-center">
                   <EmptyState
                     icon={Shield}
                     title="No proxies found"
@@ -366,6 +369,16 @@ export function ProxyInventoryTable({ defaultUser }: { defaultUser?: string }) {
                       <p className="font-mono text-[10px] text-muted-foreground">
                         {proxy.username}
                       </p>
+                      {proxy.accountCreationNumber && (
+                        <div className="mt-1.5 space-y-1">
+                          <p className="font-mono text-[10px] text-blue-700 truncate max-w-[160px]">
+                            ACN {proxy.accountCreationNumber}
+                          </p>
+                          <AcnLinkTimer
+                            linkedAt={proxy.accountCreationNumberLinkedAt}
+                          />
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       {proxy.provider}
@@ -433,6 +446,24 @@ export function ProxyInventoryTable({ defaultUser }: { defaultUser?: string }) {
                           </>
                         )}
                       </div>
+                    </TableCell>
+                    <TableCell>
+                      {proxy.accountCreationNumber ? (
+                        <span className="font-mono text-[10px] truncate max-w-[120px] block">
+                          {proxy.accountCreationNumber}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground text-xs">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {proxy.accountCreationNumber ? (
+                        <AcnLinkTimer
+                          linkedAt={proxy.accountCreationNumberLinkedAt}
+                        />
+                      ) : (
+                        <span className="text-muted-foreground text-xs">—</span>
+                      )}
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       {formatDate(proxy.purchasedAt)}
